@@ -20,10 +20,7 @@ def crop_objects_by_labels(model_path, image_path, output_dir="cropped_objects",
         output_dir (str): 크롭된 이미지들을 저장할 디렉토리
         result_dir (str): 결과 이미지를 저장할 디렉토리
     """
-    
-    # 출력 디렉토리 생성
-    # Path(output_dir).mkdir(exist_ok=True)  # 제거
-    Path(result_dir).mkdir(exist_ok=True)
+
     
     # YOLO 모델 로드
     try:
