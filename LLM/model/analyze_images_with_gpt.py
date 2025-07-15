@@ -114,16 +114,6 @@ def parse_gpt_result_with_rag(raw_text, rag_md_paths):
             result.append(item)
     return result
 
-# 임베딩 함수
-EMBED_MODEL = "text-embedding-3-small"
-def get_embedding(text):
-    client = OpenAI()
-    return client.embeddings.create(input=text, model=EMBED_MODEL).data[0].embedding
-
-def cosine_similarity(a, b):
-    a, b = np.array(a), np.array(b)
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
 def main():
     parser = argparse.ArgumentParser(description="분석할 detection_result_*.jpg 파일명을 지정하세요.")
     parser.add_argument('--image', type=str, required=True, help='분석할 detection_result_*.jpg 파일명 (예: detection_result_test4.jpg)')
