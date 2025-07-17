@@ -1,6 +1,5 @@
 import cv2
 import os
-import argparse
 from ultralytics import YOLO
 from pathlib import Path
 import sys
@@ -10,13 +9,13 @@ sys.path.append(os.path.dirname(__file__))
 MODEL_DIR = os.path.dirname(__file__)
 RESULT_DIR = os.path.join(os.path.dirname(__file__), '../detection_results/images')
 
-def crop_objects_by_labels(model_path, image_path, output_dir="cropped_objects", result_dir="detection_results"):
+def crop_objects_by_labels(image_path, model_path="best.pt", output_dir="cropped_objects", result_dir="detection_results"):
     """
     YOLO 모델을 사용하여 이미지에서 객체를 감지하고 라벨별로 크롭하여 저장하는 함수
     
     Args:
-        model_path (str): YOLO 모델 파일 경로 (.pt)
         image_path (str): 분석할 이미지 파일 경로
+        model_path (str): YOLO 모델 파일 경로 (.pt) (기본값: best.pt)
         output_dir (str): 크롭된 이미지들을 저장할 디렉토리
         result_dir (str): 결과 이미지를 저장할 디렉토리
     """
@@ -99,6 +98,8 @@ def crop_objects_by_labels(model_path, image_path, output_dir="cropped_objects",
 
 def main():
     """메인 함수 - 커맨드 라인 인자 처리"""
+    import argparse
+    
     parser = argparse.ArgumentParser(
         description="YOLO 모델을 사용하여 이미지에서 객체를 감지하고 라벨별로 크롭하는 도구",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -151,7 +152,7 @@ def main():
     print("=" * 50)
     
     # 크롭 실행 (항상 best.pt 모델 사용)
-    crop_objects_by_labels(model_path, args.image, args.output, args.result)
+    crop_objects_by_labels(args.image, model_path, args.output, args.result)
     
     print("=" * 50)
     print("작업이 완료되었습니다.")
