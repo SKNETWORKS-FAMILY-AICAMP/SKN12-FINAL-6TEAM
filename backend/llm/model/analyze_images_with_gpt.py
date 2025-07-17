@@ -2,7 +2,6 @@ import base64
 import os
 import openai
 from dotenv import load_dotenv
-import argparse
 import sys
 import json
 import numpy as np
@@ -14,7 +13,7 @@ sys.path.append(os.path.dirname(__file__))
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-DOCS_DIR = os.path.join(os.path.dirname(__file__), '../rag_docs')
+DOCS_DIR = os.path.join(os.path.dirname(__file__), '../rag')
 IMAGE_DIR = os.path.join(os.path.dirname(__file__), '../detection_results/images')
 RESULT_DIR = os.path.join(os.path.dirname(__file__), '../detection_results/results')
 
@@ -182,26 +181,28 @@ def parse_gpt_result_with_rag(raw_text, rag_md_paths):
     
     return result
 
-def main():
-    parser = argparse.ArgumentParser(description="분석할 detection_result_*.jpg 파일명을 지정하세요.")
-    parser.add_argument('--image', type=str, required=True, help='분석할 detection_result_*.jpg 파일명 (예: detection_result_test4.jpg)')
-    args = parser.parse_args()
-
+def analyze_image_gpt(image_base):
+    """GPT를 사용하여 이미지 분석을 수행하는 함수
+    
+    Args:
+        image_base (str): 분석할 이미지의 기본 파일명 (예: test4)
+        
+    Returns:
+        dict: 분석 결과를 포함한 딕셔너리
+    """
     if not OPENAI_API_KEY:
         print("OPENAI_API_KEY가 설정되어 있지 않습니다. .env 파일을 확인하세요.")
-        return
+        return None
 
     if not os.path.exists(IMAGE_DIR):
         print(f"폴더를 찾을 수 없습니다: {IMAGE_DIR}")
-        return
+        return None
 
-    # 사용자가 입력한 파일명에서 확장자 제거 (test4.jpg → test4, test4 → test4)
-    image_base = os.path.splitext(args.image)[0]
     target_filename = f"detection_result_{image_base}.jpg"
     image_path = os.path.join(IMAGE_DIR, target_filename)
     if not os.path.exists(image_path):
         print(f"{IMAGE_DIR} 폴더에 {target_filename} 파일이 없습니다.")
-        return
+        return None
 
     print(f"\n===== {target_filename} 심리 분석 결과 =====")
     try:
@@ -214,7 +215,7 @@ def main():
         gpt_items = parse_gpt_result_with_rag(result_text_gpt, rag_md_paths)
     except Exception as e:
         print(f"분석 실패: {e}")
-        return
+        return None
 
     # RAG 기반 추출 결과를 그대로 사용
     enriched = gpt_items
@@ -244,6 +245,28 @@ def main():
     with open(result_json_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print(f"최종 해석본이 {result_json_path}에 저장되었습니다.")
+    
+    return result
+
+def main():
+    """메인 함수 - 커맨드 라인 인자 처리"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="분석할 detection_result_*.jpg 파일명을 지정하세요.")
+    parser.add_argument('--image', type=str, required=True, help='분석할 detection_result_*.jpg 파일명 (예: detection_result_test4.jpg)')
+    args = parser.parse_args()
+
+    # 사용자가 입력한 파일명에서 확장자 제거 (test4.jpg → test4, test4 → test4)
+    image_base = os.path.splitext(args.image)[0]
+    
+    # 새로운 모듈화된 함수 호출
+    result = analyze_image_gpt(image_base)
+    
+    if result is None:
+        print("분석에 실패했습니다.")
+        return
+    
+    print("분석이 완료되었습니다.")
 
 if __name__ == "__main__":
     main() 
