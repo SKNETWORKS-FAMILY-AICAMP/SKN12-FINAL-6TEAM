@@ -25,3 +25,6 @@ yarn-error.log*
 # .env 
 /frontend/.env
 /backend/.env
+
+# 대용량 파일
+/backend/llm/model/kobert_model/
