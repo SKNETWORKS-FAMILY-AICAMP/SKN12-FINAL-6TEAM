@@ -4,6 +4,8 @@ import os
 import sys
 import json
 from train_and_eval_kobert import run_persona_prediction_from_result
+from crop_by_labels import crop_objects_by_labels
+from analyze_images_with_gpt import analyze_image_gpt
 sys.path.append(os.path.dirname(__file__))
 
 MODEL_DIR = os.path.dirname(__file__)
@@ -22,11 +24,11 @@ def main():
 
     # [1/3] 객체 탐지
     print("[1/3] 객체 탐지 및 결과 이미지 생성 중...")
-    subprocess.run(['python', 'crop_by_labels.py', '--image', image_path], cwd=os.path.dirname(__file__) or '.')
+    crop_objects_by_labels(image_path)
 
     # [2/3] GPT 분석
     print("[2/3] GPT 분석 실행 중...")
-    subprocess.run(['python', 'analyze_images_with_gpt.py', '--image', image_base], cwd=os.path.dirname(__file__) or '.')
+    analyze_image_gpt(image_base)
 
     # [3/3] 감정 유형화
     print("[3/3] 감정 유형화 결과:")
