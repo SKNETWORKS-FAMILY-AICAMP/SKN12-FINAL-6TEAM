@@ -206,8 +206,8 @@ def analyze_image_gpt(image_base):
 
     print(f"\n===== {target_filename} 심리 분석 결과 =====")
     try:
-        # 1차 GPT 해석 (RAG 이미지 포함)
-        result_text_gpt = analyze_image_with_gpt(image_path, PROMPT, include_rag_images=True)
+        # 1차 GPT 해석 (RAG 이미지 제외 - 토큰 제한으로 인해)
+        result_text_gpt = analyze_image_with_gpt(image_path, PROMPT, include_rag_images=False)
         print(result_text_gpt)  # 1차 해석 텍스트 바로 출력
         # rag_doc_*.md 경로 리스트
         rag_md_paths = RAG_FILES
