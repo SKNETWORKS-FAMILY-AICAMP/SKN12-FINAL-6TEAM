@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(__file__))
 MODEL_DIR = os.path.dirname(__file__)
 RESULT_DIR = os.path.join(os.path.dirname(__file__), '../detection_results/images')
 
-def crop_objects_by_labels(image_path, model_path="best.pt", output_dir="cropped_objects", result_dir="detection_results"):
+def crop_objects_by_labels(image_path, model_path=None, output_dir="cropped_objects", result_dir="detection_results"):
     """
     YOLO 모델을 사용하여 이미지에서 객체를 감지하고 라벨별로 크롭하여 저장하는 함수
     
@@ -19,6 +19,8 @@ def crop_objects_by_labels(image_path, model_path="best.pt", output_dir="cropped
         output_dir (str): 크롭된 이미지들을 저장할 디렉토리
         result_dir (str): 결과 이미지를 저장할 디렉토리
     """
+    if model_path is None:
+        model_path = os.path.join(os.path.dirname(__file__), "best.pt")
 
     
     # YOLO 모델 로드
