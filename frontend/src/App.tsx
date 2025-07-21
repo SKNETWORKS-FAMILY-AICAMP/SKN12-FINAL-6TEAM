@@ -1,5 +1,5 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import MainPage from './components/pages/MainPage';
 import TestPage from './components/pages/TestPage';
 import TestInstructionPage from './components/pages/TestInstructionPage';
@@ -10,13 +10,16 @@ import ChatPage from './components/pages/ChatPage';
 import MyPage from './components/pages/MyPage';
 import LandingPage from './components/pages/LandingPage';
 import NicknamePage from './components/pages/NicknamePage';
+import AuthCallbackPage from './components/pages/AuthCallbackPage';
 // import FloatingChatBot from './components/common/FloatingChatBot';
 import { useAppState } from './hooks/useAppState';
+import { authService } from './services/authService';
 import './App.css';
 import './components/DreamSearchApp.css';
 
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     selectedCharacter,
     chatHistory,
@@ -37,6 +40,26 @@ const AppContent: React.FC = () => {
     handleUpdateProfile,
     handleInitializeChat
   } = useAppState();
+
+  // URL에서 토큰 처리 (보안 이슈 해결용 임시 처리)
+  useEffect(() => {
+    const urlParams = new URLSearchParams(location.search);
+    const token = urlParams.get('token');
+    
+    if (token) {
+      console.warn('Security Warning: Token detected in URL - cleaning up...');
+      
+      // 토큰을 localStorage에 저장 (임시 처리)
+      localStorage.setItem('access_token', token);
+      
+      // URL에서 토큰 제거
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+      
+      // 페이지 새로고침으로 완전한 초기화
+      window.location.reload();
+    }
+  }, [location.search]);
 
   const handleNavigate = (screen: string) => {
     switch (screen) {
@@ -186,6 +209,10 @@ const AppContent: React.FC = () => {
               }}
             />
           } 
+        />
+        <Route 
+          path="/auth-callback" 
+          element={<AuthCallbackPage />} 
         />
       </Routes>
       {/* <FloatingChatBot /> */}
