@@ -38,4 +38,5 @@ def get_db():
 # 데이터베이스 테이블 생성
 def create_tables():
     from .models.user import Base
+    from .models import chat
     Base.metadata.create_all(bind=engine)

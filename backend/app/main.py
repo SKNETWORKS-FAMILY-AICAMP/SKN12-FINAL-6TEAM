@@ -7,6 +7,11 @@ from dotenv import load_dotenv
 
 from .api.chat import router as chat_router
 from .api.auth import router as auth_router
+from .api.user import router as user_router
+from .api.friend import router as friend_router
+from .api.test import router as test_router
+from .api.rating import router as rating_router
+from .api.agreement import router as agreement_router
 from .database import create_tables
 
 # 환경 변수 로드
@@ -29,8 +34,13 @@ app.add_middleware(
 )
 
 # 라우터 등록
-app.include_router(chat_router, prefix="/chat", tags=["chat"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(user_router, prefix="/users", tags=["users"])
+app.include_router(friend_router, prefix="/friends", tags=["friends"])
+app.include_router(chat_router, prefix="/chat", tags=["chat"])
+app.include_router(test_router, prefix="/tests", tags=["tests"])
+app.include_router(rating_router, prefix="/ratings", tags=["ratings"])
+app.include_router(agreement_router, prefix="/agreements", tags=["agreements"])
 
 # 시작 이벤트
 @app.on_event("startup")
@@ -38,18 +48,18 @@ async def startup_event():
     """애플리케이션 시작 시 실행"""
     try:
         create_tables()
-        print("✅ Database tables created successfully")
-        print("🚀 Dream Care Chat API is starting...")
+        print("Database tables created successfully")
+        print("Care Chat API is starting...")
     except Exception as e:
-        print(f"❌ Database initialization failed: {e}")
+        print(f" Database initialization failed: {e}")
         raise
 
 # 전역 예외 처리
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    print(f"❌ Global exception: {exc}")
-    print(f"❌ Request URL: {request.url}")
-    print(f"❌ Request method: {request.method}")
+    print(f"Global exception: {exc}")
+    print(f"Request URL: {request.url}")
+    print(f"Request method: {request.method}")
     import traceback
     traceback.print_exc()
     

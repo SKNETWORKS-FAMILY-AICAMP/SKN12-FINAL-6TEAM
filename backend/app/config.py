@@ -6,13 +6,13 @@ load_dotenv()
 
 class Settings(BaseSettings):
     # 데이터베이스 설정
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/dream_care")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/test_1")
     
     # OpenAI 설정
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
     # 애플리케이션 설정
-    APP_NAME: str = "Dream Care Chat API"
+    APP_NAME: str = "Care Chat API"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
     # 보안 설정
