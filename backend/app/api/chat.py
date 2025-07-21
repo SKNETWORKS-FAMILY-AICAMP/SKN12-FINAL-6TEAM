@@ -10,11 +10,11 @@ from ..schemas.chat import (
     ChatSessionDetailResponse,
     SendMessageRequest,
     SendMessageResponse,
-    ChatSessionStats,
-    ErrorResponse
+    ChatMessageResponse
 )
-from ..services.chat_service import ChatService
-from ..services.ai_service import AIService
+from ..models.chat import ChatSession, ChatMessage
+from ..models.user import UserInformation
+from ..models.friend import Friend
 
 router = APIRouter()
 
@@ -25,13 +25,47 @@ async def create_chat_session(
 ):
     """새 채팅 세션 생성"""
     try:
-        print(f"세션 생성 요청 받음: user_id={session_data.user_id}, friends_id={session_data.friends_id}, session_name={session_data.session_name}")
-        chat_service = ChatService(db)
-        session = chat_service.create_session(session_data)
-        print(f"세션 생성 성공: {session.chat_sessions_id}")
-        return session
+        # 사용자 존재 확인
+        user = db.query(UserInformation).filter(UserInformation.user_id == session_data.user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="사용자를 찾을 수 없습니다."
+            )
+        
+        # 친구 존재 확인
+        friend = db.query(Friend).filter(Friend.friends_id == session_data.friends_id).first()
+        if not friend:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="친구를 찾을 수 없습니다."
+            )
+        
+        # 새 세션 생성
+        new_session = ChatSession(
+            user_id=session_data.user_id,
+            friends_id=session_data.friends_id,
+            session_name=session_data.session_name or f"{user.nickname}와 {friend.friends_name}의 대화",
+            is_active=True
+        )
+        
+        db.add(new_session)
+        db.commit()
+        db.refresh(new_session)
+        
+        return ChatSessionResponse(
+            chat_sessions_id=new_session.chat_sessions_id,
+            user_id=new_session.user_id,
+            friends_id=new_session.friends_id,
+            session_name=new_session.session_name,
+            is_active=new_session.is_active,
+            created_at=new_session.created_at,
+            updated_at=new_session.updated_at
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"세션 생성 실패: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"세션 생성 중 오류가 발생했습니다: {str(e)}"
@@ -44,9 +78,24 @@ async def get_user_sessions(
 ):
     """사용자의 모든 채팅 세션 목록 조회"""
     try:
-        chat_service = ChatService(db)
-        sessions = chat_service.get_user_sessions(user_id)
-        return sessions
+        sessions = db.query(ChatSession).filter(
+            ChatSession.user_id == user_id,
+            ChatSession.is_active == True
+        ).order_by(ChatSession.created_at.desc()).all()
+        
+        return [
+            ChatSessionResponse(
+                chat_sessions_id=session.chat_sessions_id,
+                user_id=session.user_id,
+                friends_id=session.friends_id,
+                session_name=session.session_name,
+                is_active=session.is_active,
+                created_at=session.created_at,
+                updated_at=session.updated_at
+            )
+            for session in sessions
+        ]
+        
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -60,8 +109,9 @@ async def get_session_detail(
 ):
     """특정 채팅 세션 상세 조회 (메시지 포함)"""
     try:
-        chat_service = ChatService(db)
-        session = chat_service.get_session(session_id)
+        session = db.query(ChatSession).filter(
+            ChatSession.chat_sessions_id == session_id
+        ).first()
         
         if not session:
             raise HTTPException(
@@ -69,10 +119,23 @@ async def get_session_detail(
                 detail="세션을 찾을 수 없습니다."
             )
         
-        messages = chat_service.get_session_messages(session_id)
+        # 세션의 메시지들 조회
+        messages = db.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id
+        ).order_by(ChatMessage.created_at.asc()).all()
         
-        # 세션 정보에 메시지 추가
-        session_detail = ChatSessionDetailResponse(
+        message_responses = [
+            ChatMessageResponse(
+                chat_messages_id=msg.chat_messages_id,
+                session_id=msg.session_id,
+                sender_type=msg.sender_type,
+                content=msg.content,
+                created_at=msg.created_at
+            )
+            for msg in messages
+        ]
+        
+        return ChatSessionDetailResponse(
             chat_sessions_id=session.chat_sessions_id,
             user_id=session.user_id,
             friends_id=session.friends_id,
@@ -80,13 +143,8 @@ async def get_session_detail(
             is_active=session.is_active,
             created_at=session.created_at,
             updated_at=session.updated_at,
-            user_type=session.user_type,
-            conversation_stage=session.conversation_stage,
-            emotional_state=session.emotional_state,
-            messages=messages
+            messages=message_responses
         )
-        
-        return session_detail
         
     except HTTPException:
         raise
@@ -104,11 +162,11 @@ async def send_message(
 ):
     """메시지 전송 및 AI 응답 생성"""
     try:
-        chat_service = ChatService(db)
-        ai_service = AIService(db)
-        
         # 세션 존재 확인
-        session = chat_service.get_session(session_id)
+        session = db.query(ChatSession).filter(
+            ChatSession.chat_sessions_id == session_id
+        ).first()
+        
         if not session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -122,25 +180,44 @@ async def send_message(
             )
         
         # 사용자 메시지 저장
-        user_message = chat_service.add_message(
+        user_message = ChatMessage(
             session_id=session_id,
             sender_type="user",
             content=message_request.content
         )
+        db.add(user_message)
+        db.flush()
         
-        # AI 응답 생성
-        ai_response = ai_service.process_message(session_id, message_request.content)
+        # 간단한 AI 응답 생성 (실제로는 AI 서비스 연동 필요)
+        ai_response_content = f"안녕하세요! '{message_request.content}'에 대한 답변입니다."
         
         # AI 응답 메시지 저장
-        assistant_message = chat_service.add_message(
+        assistant_message = ChatMessage(
             session_id=session_id,
             sender_type="assistant",
-            content=ai_response
+            content=ai_response_content
         )
+        db.add(assistant_message)
+        db.commit()
+        
+        db.refresh(user_message)
+        db.refresh(assistant_message)
         
         return SendMessageResponse(
-            user_message=user_message,
-            assistant_message=assistant_message,
+            user_message=ChatMessageResponse(
+                chat_messages_id=user_message.chat_messages_id,
+                session_id=user_message.session_id,
+                sender_type=user_message.sender_type,
+                content=user_message.content,
+                created_at=user_message.created_at
+            ),
+            assistant_message=ChatMessageResponse(
+                chat_messages_id=assistant_message.chat_messages_id,
+                session_id=assistant_message.session_id,
+                sender_type=assistant_message.sender_type,
+                content=assistant_message.content,
+                created_at=assistant_message.created_at
+            ),
             session_updated=True
         )
         
@@ -152,31 +229,61 @@ async def send_message(
             detail=f"메시지 전송 중 오류가 발생했습니다: {str(e)}"
         )
 
-@router.get("/sessions/{session_id}/stats", response_model=ChatSessionStats)
-async def get_session_stats(
-    session_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """세션 통계 조회"""
-    try:
-        chat_service = ChatService(db)
-        stats = chat_service.get_session_stats(session_id)
+# @router.get("/sessions/{session_id}/stats", response_model=ChatSessionStats)
+# async def get_session_stats(
+#     session_id: UUID,
+#     db: Session = Depends(get_db)
+# ):
+#     """세션 통계 조회"""
+#     try:
+#         # 세션 존재 확인
+#         session = db.query(ChatSession).filter(
+#             ChatSession.chat_sessions_id == session_id
+#         ).first()
         
-        if not stats:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="세션을 찾을 수 없습니다."
-            )
+#         if not session:
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND,
+#                 detail="세션을 찾을 수 없습니다."
+#             )
         
-        return stats
+#         # 메시지 통계 계산
+#         from sqlalchemy import func
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"세션 통계 조회 중 오류가 발생했습니다: {str(e)}"
-        )
+#         total_messages = db.query(func.count(ChatMessage.chat_messages_id)).filter(
+#             ChatMessage.session_id == session_id
+#         ).scalar() or 0
+        
+#         user_messages = db.query(func.count(ChatMessage.chat_messages_id)).filter(
+#             ChatMessage.session_id == session_id,
+#             ChatMessage.sender_type == "user"
+#         ).scalar() or 0
+        
+#         assistant_messages = db.query(func.count(ChatMessage.chat_messages_id)).filter(
+#             ChatMessage.session_id == session_id,
+#             ChatMessage.sender_type == "assistant"
+#         ).scalar() or 0
+        
+#         last_message = db.query(ChatMessage).filter(
+#             ChatMessage.session_id == session_id
+#         ).order_by(ChatMessage.created_at.desc()).first()
+        
+#         return ChatSessionStats(
+#             session_id=session_id,
+#             total_messages=total_messages,
+#             user_messages=user_messages,
+#             assistant_messages=assistant_messages,
+#             session_duration=None,  # 계산 로직 필요
+#             last_activity=last_message.created_at if last_message else session.created_at
+#         )
+        
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"세션 통계 조회 중 오류가 발생했습니다: {str(e)}"
+#         )
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(
@@ -185,14 +292,18 @@ async def delete_session(
 ):
     """세션 삭제 (비활성화)"""
     try:
-        chat_service = ChatService(db)
-        success = chat_service.delete_session(session_id)
+        session = db.query(ChatSession).filter(
+            ChatSession.chat_sessions_id == session_id
+        ).first()
         
-        if not success:
+        if not session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="세션을 찾을 수 없습니다."
             )
+        
+        session.is_active = False
+        db.commit()
         
         return {"message": "세션이 성공적으로 삭제되었습니다."}
         
@@ -204,25 +315,38 @@ async def delete_session(
             detail=f"세션 삭제 중 오류가 발생했습니다: {str(e)}"
         )
 
-@router.get("/sessions/{session_id}/messages")
+@router.get("/sessions/{session_id}/messages", response_model=List[ChatMessageResponse])
 async def get_session_messages(
     session_id: UUID,
     db: Session = Depends(get_db)
 ):
     """세션의 모든 메시지 조회"""
     try:
-        chat_service = ChatService(db)
-        
         # 세션 존재 확인
-        session = chat_service.get_session(session_id)
+        session = db.query(ChatSession).filter(
+            ChatSession.chat_sessions_id == session_id
+        ).first()
+        
         if not session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="세션을 찾을 수 없습니다."
             )
         
-        messages = chat_service.get_session_messages(session_id)
-        return messages
+        messages = db.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id
+        ).order_by(ChatMessage.created_at.asc()).all()
+        
+        return [
+            ChatMessageResponse(
+                chat_messages_id=msg.chat_messages_id,
+                session_id=msg.session_id,
+                sender_type=msg.sender_type,
+                content=msg.content,
+                created_at=msg.created_at
+            )
+            for msg in messages
+        ]
         
     except HTTPException:
         raise
