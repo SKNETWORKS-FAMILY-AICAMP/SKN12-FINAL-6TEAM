@@ -14,7 +14,6 @@ from ..schemas.chat import (
     ChatMessageCreate,
     SendMessageRequest,
     SendMessageResponse,
-    ChatSessionStats
 )
 
 class ConversationMemory:
@@ -151,7 +150,8 @@ class ChatService:
         print(f"새 세션 생성 시도: user_id={session_data.user_id}, friends_id={session_data.friends_id}")
         
         # 간단한 존재 확인 (관계 없이 직접 확인)
-        from ..models.chat import User, Friend
+        from ..models.user import User
+        from ..models.chat import Friend
         user_exists = self.db.query(User).filter(User.user_id == session_data.user_id).first() is not None
         friend_exists = self.db.query(Friend).filter(Friend.friends_id == session_data.friends_id).first() is not None
         
@@ -251,29 +251,4 @@ class ChatService:
             return True
         return False
     
-    def get_session_stats(self, session_id: UUID) -> Optional[ChatSessionStats]:
-        """세션 통계 조회"""
-        session = self.get_session(session_id)
-        if not session:
-            return None
-        
-        memory = ConversationMemory(session_id, self.db)
-        
-        total_messages = self.db.query(ChatMessage).filter(ChatMessage.session_id == session_id).count()
-        user_messages = memory.get_message_count_by_role("user")
-        assistant_messages = memory.get_message_count_by_role("assistant")
-        
-        return ChatSessionStats(
-            total_messages=total_messages,
-            user_messages=user_messages,
-            assistant_messages=assistant_messages,
-            current_stage=getattr(session, 'conversation_stage', 'start'),
-            stage_name=self.stages.get(getattr(session, 'conversation_stage', 'start'), "시작"),
-            session_info={
-                "user_type": getattr(session, 'user_type', '미정'),
-                "emotional_state": getattr(session, 'emotional_state', 'neutral'),
-                "started_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat()
-            },
-            memory_capacity=f"{total_messages}/무제한"
-        )
+   
