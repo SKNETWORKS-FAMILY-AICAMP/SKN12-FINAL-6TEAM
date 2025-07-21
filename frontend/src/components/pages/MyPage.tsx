@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navigation from '../common/Navigation';
 import { ChatHistory, TestResult, UserProfile } from '../../types';
 import { MessageCircle, FileText, Trash2, User, Calendar, MessageSquare, Edit2, Camera, Check, X, Loader } from 'lucide-react';
+import { userService } from '../../services/userService';
+import { authService } from '../../services/authService';
 
 interface MyPageProps {
   chatHistory: ChatHistory[];
@@ -16,9 +18,9 @@ interface MyPageProps {
 }
 
 const MyPage: React.FC<MyPageProps> = ({
-  chatHistory,
-  testResults,
-  userProfile,
+  chatHistory: propChatHistory,
+  testResults: propTestResults,
+  userProfile: propUserProfile,
   onNewChat,
   onDeleteAccount,
   onNavigate,
@@ -26,6 +28,13 @@ const MyPage: React.FC<MyPageProps> = ({
   onUpdateProfile
 }) => {
   const navigate = useNavigate();
+  
+  // API에서 가져온 실제 데이터 상태
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(propUserProfile);
+  const [chatHistory, setChatHistory] = useState<ChatHistory[]>(propChatHistory || []);
+  const [testResults, setTestResults] = useState<TestResult[]>(propTestResults || []);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+  
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editingName, setEditingName] = useState(userProfile?.name || '');
   const [profileImage, setProfileImage] = useState<string | null>(null);
@@ -37,6 +46,20 @@ const MyPage: React.FC<MyPageProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  
+  // 현재 로그인된 사용자 ID 메모이제이션
+  const currentUserId = useMemo(() => {
+    const userId = authService.getCurrentUserId();
+    if (!userId) {
+      console.error('사용자가 로그인되어 있지 않습니다.');
+      navigate('/');
+      return null;
+    }
+    return userId;
+  }, [navigate]);
+  
+  // 디바운스 타이머 레퍼런스
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // 무한 스크롤 관련 상태
   const [displayedChats, setDisplayedChats] = useState<ChatHistory[]>([]);
@@ -52,27 +75,76 @@ const MyPage: React.FC<MyPageProps> = ({
   
   const ITEMS_PER_PAGE = 5;
 
-  // 초기 데이터 로드
-  useEffect(() => {
-    loadInitialChats();
-    loadInitialTests();
-  }, [chatHistory, testResults]);
-
   // 채팅 히스토리 초기 로드
-  const loadInitialChats = () => {
+  const loadInitialChats = useCallback(() => {
     const sortedChats = [...chatHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setDisplayedChats(sortedChats.slice(0, ITEMS_PER_PAGE));
     setChatPage(0);
     setHasMoreChats(sortedChats.length > ITEMS_PER_PAGE);
-  };
+  }, [chatHistory]);
 
   // 검사 결과 초기 로드
-  const loadInitialTests = () => {
+  const loadInitialTests = useCallback(() => {
     const sortedTests = [...testResults].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setDisplayedTests(sortedTests.slice(0, ITEMS_PER_PAGE));
     setTestPage(0);
     setHasMoreTests(sortedTests.length > ITEMS_PER_PAGE);
-  };
+  }, [testResults]);
+
+  // 실제 사용자 데이터 로드
+  const loadUserData = useCallback(async () => {
+    if (!currentUserId) return;
+    
+    try {
+      setIsLoadingProfile(true);
+      
+      // 사용자 프로필 로드
+      const profile = await userService.getUserProfile(currentUserId);
+      setUserProfile(profile);
+      setEditingName(profile.name);
+      
+      // 채팅 히스토리 로드
+      const chats = await userService.getChatHistory(currentUserId, 0, ITEMS_PER_PAGE);
+      setChatHistory(chats);
+      
+      // 테스트 결과 로드
+      const tests = await userService.getTestResults(currentUserId, 0, ITEMS_PER_PAGE);
+      setTestResults(tests);
+      
+    } catch (error) {
+      console.error('사용자 데이터 로드 실패:', error);
+    } finally {
+      setIsLoadingProfile(false);
+    }
+  }, [currentUserId]);
+
+  // API에서 실제 데이터 로드
+  useEffect(() => {
+    loadUserData();
+  }, [loadUserData]);
+
+  // 채팅 히스토리 초기화
+  useEffect(() => {
+    if (chatHistory.length > 0) {
+      loadInitialChats();
+    }
+  }, [chatHistory, loadInitialChats]);
+
+  // 테스트 결과 초기화
+  useEffect(() => {
+    if (testResults.length > 0) {
+      loadInitialTests();
+    }
+  }, [testResults, loadInitialTests]);
+
+  // 컴포넌트 언마운트 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
 
   // 더 많은 채팅 로드
   const loadMoreChats = useCallback(async () => {
@@ -176,14 +248,19 @@ const MyPage: React.FC<MyPageProps> = ({
     return null;
   };
 
-  const handleNicknameCheck = async () => {
-    const error = validateNickname(editingName);
+  // 디바운스된 닉네임 검사
+  const debouncedNicknameCheck = useCallback(async (nickname: string) => {
+    if (!currentUserId) return;
+    
+    const error = validateNickname(nickname);
     if (error) {
       setNameError(error);
+      setNicknameCheckResult(null);
+      setIsNicknameChecked(false);
       return;
     }
 
-    if (editingName === userProfile?.name) {
+    if (nickname === userProfile?.name) {
       setNicknameCheckResult('available');
       setIsNicknameChecked(true);
       setNameError(null);
@@ -194,29 +271,44 @@ const MyPage: React.FC<MyPageProps> = ({
     setNameError(null);
     
     try {
-      // 실제 구현에서는 서버에 API 요청을 보내야 함
-      // 현재는 시뮬레이션을 위해 임시로 랜덤 결과 생성
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const isAvailable = Math.random() > 0.3; // 70% 확률로 사용 가능
-      setNicknameCheckResult(isAvailable ? 'available' : 'taken');
+      const result = await userService.checkNickname(currentUserId, nickname);
+      setNicknameCheckResult(result.available ? 'available' : 'taken');
       setIsNicknameChecked(true);
     } catch (error) {
+      console.error('닉네임 확인 실패:', error);
       setNicknameCheckResult('error');
       setIsNicknameChecked(false);
     } finally {
       setIsCheckingNickname(false);
     }
-  };
+  }, [currentUserId, userProfile?.name]);
 
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditingName(e.target.value);
+  const handleNicknameCheck = useCallback(() => {
+    debouncedNicknameCheck(editingName);
+  }, [debouncedNicknameCheck, editingName]);
+
+  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const newName = e.target.value;
+    setEditingName(newName);
     setNicknameCheckResult(null);
     setIsNicknameChecked(false);
     setNameError(null);
-  };
+    
+    // 디바운스된 자동 닉네임 검사 (800ms 후)
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    
+    debounceTimerRef.current = setTimeout(() => {
+      if (newName.trim() && newName !== userProfile?.name) {
+        debouncedNicknameCheck(newName);
+      }
+    }, 800);
+  }, [debouncedNicknameCheck, userProfile?.name]);
 
-  const handleProfileSave = async () => {
+  const handleProfileSave = useCallback(async () => {
+    if (!currentUserId) return;
+    
     // 닉네임이 기존과 동일하지 않은 경우에만 중복검사 확인
     if (editingName !== userProfile?.name && (!isNicknameChecked || nicknameCheckResult !== 'available')) {
       setNameError('닉네임 중복 검사를 완료해주세요.');
@@ -227,30 +319,44 @@ const MyPage: React.FC<MyPageProps> = ({
     setSaveError(null);
     setSaveSuccess(false);
 
-    try {
-      // 실제 구현에서는 서버에 API 요청을 보내야 함
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      if (userProfile && onUpdateProfile) {
-        const updatedProfile: UserProfile = {
-          ...userProfile,
-          name: editingName,
-          // profileImage could be added to UserProfile type later
-        };
-        onUpdateProfile(updatedProfile);
+    // Optimistic Update: UI를 먼저 업데이트
+    const originalProfile = userProfile;
+    if (userProfile) {
+      const optimisticProfile: UserProfile = {
+        ...userProfile,
+        name: editingName,
+      };
+      setUserProfile(optimisticProfile);
+      if (onUpdateProfile) {
+        onUpdateProfile(optimisticProfile);
       }
+    }
+
+    try {
+      // 백엔드 업데이트
+      await userService.updateUser(currentUserId, { nickname: editingName });
       
       setSaveSuccess(true);
+      // 성공 딜레이 단축: 1.5초 → 0.8초
       setTimeout(() => {
         setIsEditingProfile(false);
         setSaveSuccess(false);
-      }, 1500);
+      }, 800);
     } catch (error) {
+      console.error('프로필 저장 실패:', error);
       setSaveError('프로필 저장 중 오류가 발생했습니다. 다시 시도해주세요.');
+      
+      // 실패 시 원래 상태로 롤백
+      if (originalProfile) {
+        setUserProfile(originalProfile);
+        if (onUpdateProfile) {
+          onUpdateProfile(originalProfile);
+        }
+      }
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [currentUserId, editingName, userProfile, isNicknameChecked, nicknameCheckResult, onUpdateProfile]);
 
   const handleProfileCancel = () => {
     setIsEditingProfile(false);
@@ -480,25 +586,34 @@ const MyPage: React.FC<MyPageProps> = ({
                   </div>
                 ) : (
                   <div>
-                    <div className="flex items-center space-x-2">
-                      <h2 className="text-xl font-bold text-gray-800">{userProfile?.name || '사용자'}</h2>
-                      <button
-                        onClick={handleProfileEdit}
-                        className="p-1 text-gray-500 hover:text-gray-700 transition-colors"
-                        title="프로필 편집"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <p className="text-gray-600 text-left">{userProfile?.email}</p>
-                    <div className="flex items-center space-x-6 mt-2 text-sm text-gray-500">
-                      <span className="flex items-center space-x-1">
-                        <Calendar className="w-4 h-4" />
-                        <span>가입일: {userProfile?.joinDate && formatDate(userProfile.joinDate)}</span>
-                      </span>
-                      <span>총 검사: {userProfile?.totalTests}회</span>
-                      <span>총 채팅: {userProfile?.totalChats}회</span>
-                    </div>
+                    {isLoadingProfile ? (
+                      <div className="flex items-center space-x-2">
+                        <Loader className="w-5 h-5 animate-spin text-blue-500" />
+                        <span className="text-gray-600">프로필 로딩 중...</span>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h2 className="text-xl font-bold text-gray-800">{userProfile?.name || '사용자'}</h2>
+                          <button
+                            onClick={handleProfileEdit}
+                            className="p-1 text-gray-500 hover:text-gray-700 transition-colors"
+                            title="프로필 편집"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <p className="text-gray-600 text-left">{userProfile?.email}</p>
+                        <div className="flex items-center space-x-6 mt-2 text-sm text-gray-500">
+                          <span className="flex items-center space-x-1">
+                            <Calendar className="w-4 h-4" />
+                            <span>가입일: {userProfile?.joinDate && formatDate(userProfile.joinDate)}</span>
+                          </span>
+                          <span>총 검사: {userProfile?.totalTests}회</span>
+                          <span>총 채팅: {userProfile?.totalChats}회</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -534,7 +649,9 @@ const MyPage: React.FC<MyPageProps> = ({
                                 <div>
                                   <p className="font-medium text-gray-800">{chat.characterName}와의 대화</p>
                                   <p className="text-sm text-gray-500">
-                                    {formatTime(chat.messages[chat.messages.length - 1].timestamp)} · 메시지 {chat.messages.length}개
+                                    {chat.messages && chat.messages.length > 0 && chat.messages[chat.messages.length - 1]?.timestamp 
+                                      ? formatTime(chat.messages[chat.messages.length - 1].timestamp) 
+                                      : '시간 정보 없음'} · 메시지 {chat.messages?.length || 0}개
                                   </p>
                                 </div>
                               </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { authService } from '../../services/authService';
 
 interface NavigationProps {
@@ -9,7 +9,6 @@ interface NavigationProps {
 
 const Navigation: React.FC<NavigationProps> = ({ activeTab, onNavigate }) => {
   const location = useLocation();
-  const navigate = useNavigate();
   
   // URL 기반으로 활성 탭 결정
   const getActiveTab = () => {
@@ -35,13 +34,17 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onNavigate }) => {
 
   const handleLogout = async () => {
     try {
-      console.log('Logging out...');
+      console.log('Navigation: Starting logout...');
       await authService.signOut();
-      navigate('/');
+      console.log('Navigation: Logout successful, redirecting...');
+      
+      // 강제로 홈페이지로 이동 (완전한 페이지 리로드)
+      window.location.href = '/';
+      
     } catch (error) {
-      console.error('Logout failed:', error);
-      // 에러가 발생해도 로그아웃 처리
-      navigate('/');
+      console.error('Navigation: Logout failed:', error);
+      // 에러가 발생해도 로그아웃 처리 (강제 리다이렉션)
+      window.location.href = '/';
     }
   };
 

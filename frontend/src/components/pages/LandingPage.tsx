@@ -54,28 +54,27 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleLogin }) => {
 
   const handleGoogleLogin = () => {
     try {
-      console.log('Starting Google login with redirect...');
+      console.log('Starting Google OAuth redirect...');
       
       const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID || '689738363605-i65c3ar97vnts2jeh648dj3v9b23njq4.apps.googleusercontent.com';
-      const redirectUri = `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/auth/google/callback`;
-      const scope = 'email profile';
+      const redirectUri = encodeURIComponent('http://localhost:8000/auth/google/callback');
+      const scope = encodeURIComponent('openid email profile');
       
-      // Google OAuth2 서버 리다이렉션 방식
+      // 올바른 Google OAuth URL
       const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${clientId}&` +
-        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-        `scope=${encodeURIComponent(scope)}&` +
+        `redirect_uri=${redirectUri}&` +
         `response_type=code&` +
-        `access_type=offline`;
+        `scope=${scope}&` +
+        `prompt=select_account`;
       
-      console.log('Redirecting to:', googleAuthUrl);
+      console.log('Redirecting to Google OAuth:', googleAuthUrl);
       
       // Google OAuth 페이지로 리다이렉션
       window.location.href = googleAuthUrl;
       
     } catch (error) {
-      console.error('Login failed:', error);
-      navigate('/nickname');
+      console.error('OAuth redirect failed:', error);
     }
   };
 
