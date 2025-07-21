@@ -1,4 +1,20 @@
+from .user import Base, SocialUser, User, UserInformation
 from .chat import ChatSession, ChatMessage
-from .user import User, Base
+from .friend import Friend
+from .test import DrawingTest, DrawingTestResult
+from .rating import Rating
+from .agreement import Agreement
 
-__all__ = ["ChatSession", "ChatMessage", "User", "Base"]
+__all__ = [
+    'Base',
+    'SocialUser',
+    'User', 
+    'UserInformation',
+    'ChatSession',
+    'ChatMessage',
+    'Friend',
+    'DrawingTest',
+    'DrawingTestResult',
+    'Rating',
+    'Agreement'
+]
