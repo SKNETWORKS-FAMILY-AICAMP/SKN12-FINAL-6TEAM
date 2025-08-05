@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import os
+import logging
 from dotenv import load_dotenv
 
 from .api.chat import router as chat_router
@@ -16,29 +17,53 @@ from .api.agreement import router as agreement_router
 from .api.admin import router as admin_router
 from .api.pipeline import router as pipeline_router
 from .database import create_tables
+from .config import settings
 
 # 환경 변수 로드
 load_dotenv()
 
+# 로깅 설정
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # FastAPI 애플리케이션 생성
 app = FastAPI(
-    title="Care Chat API",
+    title=settings.APP_NAME,
     description="심리 상담 챗봇 API",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs" if settings.DEBUG else None,  # 프로덕션에서 문서 숨기기
+    redoc_url="/redoc" if settings.DEBUG else None
 )
 
-# CORS 설정
+# CORS 설정 - 환경별로 다르게 적용
+if settings.ENVIRONMENT == "development":
+    cors_origins = ["http://localhost:3000", "http://localhost:80", "http://localhost:8080"]
+else:
+    cors_origins = settings.ALLOWED_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 개발 환경에서만 사용
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
+# 미들웨어 임포트
+from .middleware.validation import InputValidationMiddleware
+from .middleware.rate_limit import RateLimitMiddleware
+from .middleware.security import SecurityHeadersMiddleware
+
+# 미들웨어 추가 (순서 중요 - 보안 헤더가 가장 먼저)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(InputValidationMiddleware)
+
 # 정적 파일 서빙 설정
 # result/images 디렉토리가 없으면 생성
-import os
 if not os.path.exists("result/images"):
     os.makedirs("result/images")
 
@@ -67,7 +92,7 @@ async def startup_event():
     try:
         # 1. 데이터베이스 테이블 생성
         create_tables()
-        print("Database tables created successfully")
+        logger.info("Database tables created successfully")
         
         # 2. 페르소나 동기화
         from .services.persona_sync import persona_sync_service
@@ -77,17 +102,17 @@ async def startup_event():
         try:
             sync_success = persona_sync_service.sync_personas_table(db)
             if sync_success:
-                print("Persona synchronization completed successfully")
+                logger.info("Persona synchronization completed successfully")
             else:
-                print("Persona synchronization failed")
+                logger.warning("Persona synchronization failed")
         finally:
             db.close()
         
-        print("Care Chat API is starting...")
+        logger.info("Care Chat API is starting...")
     except Exception as e:
-        print(f"Application initialization failed: {e}")
+        logger.error(f"Application initialization failed: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         raise
 
 # 422 오류 전용 핸들러 추가
@@ -96,30 +121,40 @@ from starlette.exceptions import HTTPException
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print(f"🚨 422 Validation Error:")
-    print(f"  URL: {request.url}")
-    print(f"  Method: {request.method}")
-    print(f"  Errors: {exc.errors()}")
-    print(f"  Body: {exc.body}")
+    logger.error(f"Validation Error - URL: {request.url}, Method: {request.method}")
+    logger.error(f"Validation Errors: {exc.errors()}")
     
-    return JSONResponse(
-        status_code=422,
-        content={"detail": exc.errors(), "body": str(exc.body)}
-    )
+    # 프로덕션에서는 민감한 정보 제거
+    if settings.DEBUG:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors(), "body": str(exc.body)}
+        )
+    else:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Validation error", "errors": exc.errors()}
+        )
 
 # 전역 예외 처리
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    print(f"Global exception: {exc}")
-    print(f"Request URL: {request.url}")
-    print(f"Request method: {request.method}")
+    logger.error(f"Global exception: {exc}")
+    logger.error(f"Request URL: {request.url}, Method: {request.method}")
     import traceback
-    traceback.print_exc()
+    logger.error(traceback.format_exc())
     
-    return JSONResponse(
-        status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)}
-    )
+    # 프로덕션에서는 상세 에러 정보 숨기기
+    if settings.DEBUG:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error", "detail": str(exc)}
+        )
+    else:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error"}
+        )
     
 if __name__ == "__main__":
     uvicorn.run(

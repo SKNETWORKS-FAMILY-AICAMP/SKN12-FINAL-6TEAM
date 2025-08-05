@@ -1,19 +1,23 @@
 import os
 import jwt
+import secrets
 from datetime import datetime, timedelta, timezone
 from google.auth.transport import requests
 from google.oauth2 import id_token
 from sqlalchemy.orm import Session
 from ..models.user import SocialUser, User, UserInformation
 from ..schemas.user import UserCreate, UserUpdate, UserResponse, SocialLoginResponse
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
+from ..config import settings
+from ..utils.logger import auth_logger as logger
 
 class AuthService:
     def __init__(self):
-        self.google_client_id = os.getenv("GOOGLE_CLIENT_ID")
-        self.secret_key = os.getenv("SECRET_KEY")
-        self.algorithm = "HS256"
-        self.access_token_expire_minutes = 30 * 24 * 60  # 30 days
+        self.google_client_id = settings.GOOGLE_CLIENT_ID
+        self.secret_key = settings.JWT_SECRET_KEY
+        self.algorithm = settings.JWT_ALGORITHM
+        self.access_token_expire_minutes = settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        self.refresh_token_expire_days = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
 
     def verify_google_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Google ID 토큰을 검증하고 사용자 정보를 반환합니다."""
@@ -30,28 +34,53 @@ class AuthService:
             return idinfo
             
         except ValueError as e:
-            print(f"Token verification failed: {e}")
+            logger.error(f"Google token verification failed: {str(e)}")
             return None
 
     def create_access_token(self, data: dict) -> str:
         """JWT 액세스 토큰을 생성합니다."""
         to_encode = data.copy()
         expire = datetime.now(timezone.utc) + timedelta(minutes=self.access_token_expire_minutes)
-        to_encode.update({"exp": expire})
+        to_encode.update({
+            "exp": expire,
+            "iat": datetime.now(timezone.utc),
+            "type": "access"
+        })
+        
+        encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
+        return encoded_jwt
+    
+    def create_refresh_token(self, data: dict) -> str:
+        """JWT 리프레시 토큰을 생성합니다."""
+        to_encode = data.copy()
+        expire = datetime.now(timezone.utc) + timedelta(days=self.refresh_token_expire_days)
+        to_encode.update({
+            "exp": expire,
+            "iat": datetime.now(timezone.utc),
+            "type": "refresh",
+            "jti": secrets.token_urlsafe(32)  # JWT ID for token blacklisting
+        })
         
         encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
 
-    def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
+    def verify_token(self, token: str, token_type: str = "access") -> Optional[Dict[str, Any]]:
         """JWT 토큰을 검증하고 페이로드를 반환합니다."""
         try:
-            print(f"Verifying token: {token[:20]}...")
-            print(f"Secret key: {self.secret_key[:20]}...")
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
-            print(f"Token verification successful: {payload}")
+            
+            # 토큰 타입 검증
+            if payload.get("type") != token_type:
+                logger.warning(f"Invalid token type: expected {token_type}, got {payload.get('type')}")
+                return None
+                
+            logger.debug(f"Token verification successful for user: {payload.get('sub')}")
             return payload
-        except jwt.PyJWTError as e:
-            print(f"Token verification failed: {e}")
+        except jwt.ExpiredSignatureError:
+            logger.warning("Token has expired")
+            return None
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Invalid token: {str(e)}")
             return None
 
     def get_or_create_user(self, db: Session, google_user_info: Dict[str, Any]) -> tuple[UserInformation, bool]:
@@ -61,7 +90,7 @@ class AuthService:
         name = google_user_info.get('name')
         picture = google_user_info.get('picture')
         
-        print(f"Processing user: google_id={google_id}, email={email}, name={name}")
+        logger.info(f"Processing Google user: email={email}")
         
         # 기존 소셜 사용자 조회
         social_user = db.query(SocialUser).filter(SocialUser.social_id == google_id).first()
@@ -73,7 +102,7 @@ class AuthService:
             ).first()
             
             if user_info:
-                print(f"Existing user found: {user_info.user_id}, nickname: {user_info.nickname}, status: {user_info.status}")
+                logger.info(f"Existing user found: user_id={user_info.user_id}, status={user_info.status}")
                 
                 # INACTIVE 사용자 복구 체크
                 if user_info.status == "INACTIVE":
@@ -94,25 +123,25 @@ class AuthService:
                             user_info.deleted_at = None
                             db.commit()
                             db.refresh(user_info)
-                            print(f"User reactivated: {user_info.user_id}")
+                            logger.info(f"User reactivated: {user_info.user_id}")
                         else:
                             # 1년 초과면 로그인 거부
-                            print(f"User account expired: {user_info.user_id}")
+                            logger.warning(f"User account expired: {user_info.user_id}")
                             return None, False
                     else:
                         # deleted_at이 없는 INACTIVE 사용자도 복구 (기존 데이터 호환성)
                         user_info.status = "ACTIVE"
                         db.commit()
                         db.refresh(user_info)
-                        print(f"User reactivated (no deleted_at): {user_info.user_id}")
+                        logger.info(f"User reactivated (no deleted_at): {user_info.user_id}")
                 
                 # temp_user_로 시작하는 닉네임이면 신규 사용자로 판단
                 is_new_user = user_info.nickname.startswith('temp_user_')
-                print(f"Is new user check: {is_new_user} (nickname: {user_info.nickname})")
+                logger.debug(f"Is new user check: {is_new_user}")
                 return user_info, is_new_user
             else:
                 # social_user는 있지만 user_info가 없는 경우 (데이터 불일치 상황)
-                print(f"Social user exists but no user_info found. Creating user_info for existing social_user: {social_user.social_user_id}")
+                logger.warning(f"Social user exists but no user_info found. Creating user_info for social_user_id: {social_user.social_user_id}")
                 temp_nickname = f"temp_user_{social_user.social_user_id}"
                 new_user_info = UserInformation(
                     nickname=temp_nickname,
@@ -123,11 +152,11 @@ class AuthService:
                 db.add(new_user_info)
                 db.commit()
                 db.refresh(new_user_info)
-                print(f"User info created for existing social user: {new_user_info.user_id}")
+                logger.info(f"User info created for existing social user: {new_user_info.user_id}")
                 return new_user_info, True  # 신규 사용자로 판단
         
         # 새 사용자 생성
-        print(f"Creating new user with email: {email}")
+        logger.info(f"Creating new user with email: {email}")
         
         # 소셜 사용자 생성
         new_social_user = SocialUser(social_id=google_id)
@@ -142,11 +171,11 @@ class AuthService:
             status='ACTIVE'
         )
         
-        print(f"Adding new user to database...")
+        logger.debug("Adding new user to database...")
         db.add(new_user_info)
         db.commit()
         db.refresh(new_user_info)
-        print(f"New user created with ID: {new_user_info.user_id}, nickname: {new_user_info.nickname}")
+        logger.info(f"New user created with ID: {new_user_info.user_id}")
         return new_user_info, True  # 새 사용자
 
     def update_user(self, db: Session, user_id: int, user_update: UserUpdate) -> Optional[UserInformation]:
@@ -170,20 +199,20 @@ class AuthService:
 
     def google_login(self, db: Session, google_token: str) -> Optional[dict]:
         """Google 토큰으로 로그인/회원가입을 처리합니다."""
-        print(f"Starting Google login with token: {google_token[:50]}...")
+        logger.info("Starting Google login process")
         
         # Google 토큰 검증
         google_user_info = self.verify_google_token(google_token)
         if not google_user_info:
-            print("Google token verification failed")
+            logger.error("Google token verification failed")
             return None
             
-        print(f"Google user info: {google_user_info}")
+        logger.debug(f"Google user authenticated: {google_user_info.get('email')}")
         
         # 사용자 조회/생성
         user_info, is_new_user = self.get_or_create_user(db, google_user_info)
         
-        print(f"User created/found: user_id={user_info.user_id}, is_new_user={is_new_user}, nickname={user_info.nickname}")
+        logger.info(f"User created/found: user_id={user_info.user_id}, is_new_user={is_new_user}")
         
         # 응답 생성 (SocialLoginResponse 대신 dict로 반환하여 더 많은 정보 포함)
         result = {
@@ -197,7 +226,7 @@ class AuthService:
             "created_at": user_info.created_at.isoformat() if user_info.created_at else None
         }
         
-        print(f"Google login result: {result}")
+        logger.info(f"Google login successful for user_id: {user_info.user_id}")
         return result
 
     def google_login_with_userinfo(self, db: Session, user_info_request) -> Optional[SocialLoginResponse]:

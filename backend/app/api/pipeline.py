@@ -230,6 +230,11 @@ def run_analysis_pipeline(
     """
     백그라운드에서 실행되는 HTP 분석 파이프라인
     
+    3단계 프로세스:
+    1. YOLO 객체 탐지
+    2. GPT-4 3단계 심리 분석 (관찰→해석→키워드)
+    3. 키워드 기반 성격 분류
+    
     Args:
         unique_id: 고유 이미지 ID
         test_id: 데이터베이스 테스트 ID
@@ -241,6 +246,7 @@ def run_analysis_pipeline(
     
     try:
         print(f"🚀 백그라운드 분석 시작: {unique_id}")
+        print(f"📋 3단계 분석 프로세스 시작")
         
         # 파이프라인 실행
         pipeline = get_pipeline()
@@ -253,7 +259,7 @@ def run_analysis_pipeline(
         save_analysis_result_sync(result, test_id, description, db)
         print(f"🔥 save_analysis_result_sync 함수 호출 완료 - test_id: {test_id}")
         
-        print(f"✅ 분석 완료 및 저장: {unique_id}")
+        print(f"✅ 3단계 분석 완료 및 저장: {unique_id}")
         
     except Exception as e:
         print(f"❌ 백그라운드 분석 오류: {str(e)}")
@@ -561,7 +567,7 @@ async def get_analysis_status(
                         },
                         {
                             "name": "심리 분석", 
-                            "description": "GPT-4를 사용한 심리상태 분석",
+                            "description": "GPT-4를 사용한 3단계 심리상태 분석",
                             "completed": analysis_completed,
                             "current": detection_completed and not analysis_completed
                         },

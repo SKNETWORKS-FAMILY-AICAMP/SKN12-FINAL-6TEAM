@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.auth_service import AuthService
 from pydantic import BaseModel
+from ..config import settings
+from ..utils.logger import auth_logger as logger
 
 router = APIRouter()
 auth_service = AuthService()
@@ -63,11 +65,11 @@ async def google_login(
             )
         
         # JWT 토큰 생성
-        access_token = auth_service.create_access_token(
-            data={"sub": str(result["user_id"]), "email": result.get("email", "unknown")}
-        )
+        token_data = {"sub": str(result["user_id"]), "email": result.get("email", "unknown")}
+        access_token = auth_service.create_access_token(data=token_data)
+        refresh_token = auth_service.create_refresh_token(data=token_data)
         
-        return {
+        response_data = {
             "user": {
                 "id": result["user_id"],
                 "email": result.get("email", "unknown"),
@@ -79,9 +81,13 @@ async def google_login(
                 "updated_at": result.get("created_at", "2025-07-21T00:00:00Z")
             },
             "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer",
             "is_first_login": result["is_new_user"]
         }
+        
+        logger.info(f"Successful login for user_id: {result['user_id']}")
+        return response_data
         
     except Exception as e:
         raise HTTPException(
@@ -161,7 +167,7 @@ async def google_callback(
         from fastapi.responses import RedirectResponse
         
         response = RedirectResponse(
-            url=f"http://localhost:3000/auth-callback?session={session_id}&is_new={str(result.is_new_user).lower()}"
+            url=f"http://localhost:80/auth-callback?session={session_id}&is_new={str(result.is_new_user).lower()}"
         )
         
         # 쿠키에 토큰 저장 (HttpOnly, Secure 설정)
