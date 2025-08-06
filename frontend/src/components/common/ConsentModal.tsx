@@ -21,7 +21,7 @@ const ConsentModal: React.FC<ConsentModalProps> = ({ isOpen, onClose, onAgree })
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} className="max-w-lg w-full max-h-[85vh] h-auto">
-      <div className="px-8 py-6">
+      <div className="px-4 sm:px-6 md:px-8 lg:px-10 py-6">
         <div className="mb-6">
           <h2 className="text-xl font-bold text-gray-800 text-left">HTP 심리검사 면책 및 개인정보 활용 동의서</h2>
         </div>
