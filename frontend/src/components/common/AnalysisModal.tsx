@@ -127,28 +127,38 @@ const AnalysisModal: React.FC<AnalysisModalProps> = ({ isOpen, analysisStatus, o
     } else if (status === 'completed') {
       // 모든 단계 완료
       setSteps(prev => prev.map(step => ({ ...step, completed: true, active: false })));
-      
-      // 완료 후 바로 onComplete 호출 (결과 페이지로 이동)
-      if (onComplete) {
-        setTimeout(() => {
-          onComplete();
-        }, 1000); // 1초 후 결과 페이지로 이동
-      }
     }
   }, [analysisStatus, isOpen, onComplete, randomJoke]);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose || (() => {})} className="relative">
       <div className="p-8 text-center">
-        {/* 스피너 */}
+        {/* 스피너 또는 완료 체크 */}
         <div className="mb-6">
           <div className="w-20 h-20 mx-auto mb-4 relative">
-            <div className="absolute inset-0 border-4 border-purple-200 rounded-full"></div>
-            <div className="absolute inset-0 border-4 border-purple-600 rounded-full border-t-transparent animate-spin"></div>
+            {analysisStatus?.status === 'completed' ? (
+              // 완료시 체크 표시
+              <div className="w-20 h-20 flex items-center justify-center">
+                <Check className="w-16 h-16 text-purple-600" />
+              </div>
+            ) : (
+              // 진행중일 때 스피너
+              <>
+                <div className="absolute inset-0 border-4 border-purple-200 rounded-full"></div>
+                <div className="absolute inset-0 border-4 border-purple-600 rounded-full border-t-transparent animate-spin"></div>
+              </>
+            )}
           </div>
           
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">그림을 분석하고 있습니다</h2>
-          <p className="text-gray-600 mb-6">AI가 당신의 그림을 분석하여<br />심리 상태를 파악하고 있습니다</p>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">
+            {analysisStatus?.status === 'completed' ? '분석이 완료되었습니다!' : '그림을 분석하고 있습니다'}
+          </h2>
+          <p className="text-gray-600 mb-6">
+            {analysisStatus?.status === 'completed' 
+              ? <>AI 분석을 통해<br />당신의 심리 상태를 파악했습니다</>
+              : <>AI가 당신의 그림을 분석하여<br />심리 상태를 파악하고 있습니다</>
+            }
+          </p>
         </div>
         
         {/* 단계별 진행 상황 */}
@@ -178,9 +188,28 @@ const AnalysisModal: React.FC<AnalysisModalProps> = ({ isOpen, analysisStatus, o
           {currentMessage}
         </div>
         
+        {/* 결과 보러가기 버튼 (완료시에만 표시) */}
+        {analysisStatus?.status === 'completed' && (
+          <div className="mt-6">
+            <button
+              onClick={() => {
+                if (onComplete) {
+                  onComplete();
+                }
+              }}
+              className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-8 rounded-lg transition-colors duration-200 text-lg"
+            >
+              결과 보러가기
+            </button>
+          </div>
+        )}
+        
         {/* 안내 메시지 */}
         <div className="text-xs text-gray-400 mt-4">
-          💡 그림 분석은 1분 정도 소요되며, <br/>분석이 완료되면 자동으로 결과 페이지로 이동합니다
+          {analysisStatus?.status === 'completed' 
+            ? '🎉 분석이 완료되었습니다! 위 버튼을 눌러 결과를 확인하세요.'
+            : '💡 그림 분석은 1분 정도 소요되며, 분석이 완료되면 버튼이 나타납니다'
+          }
         </div>
       </div>
     </Modal>
