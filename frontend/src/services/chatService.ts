@@ -1,0 +1,150 @@
+import { apiClient } from './apiClient';
+import {
+  ChatSession,
+  ChatSessionDetail,
+  ChatMessage,
+  SendMessageRequest,
+  SendMessageResponse,
+  CreateSessionRequest,
+  ApiError
+} from '../types';
+
+export class ChatService {
+  // 새 채팅 세션 생성
+  async createSession(data: CreateSessionRequest): Promise<ChatSession> {
+    try {
+      return await apiClient.post<ChatSession>('/chat/sessions', data);
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  // 사용자의 모든 채팅 세션 조회
+  async getUserSessions(userId: number): Promise<ChatSession[]> {
+    try {
+      return await apiClient.get<ChatSession[]>(`/chat/sessions?user_id=${userId}`);
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  // 특정 채팅 세션 상세 조회 (메시지 포함)
+  async getSessionDetail(sessionId: string): Promise<ChatSessionDetail> {
+    try {
+      return await apiClient.get<ChatSessionDetail>(`/chat/sessions/${sessionId}`);
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  // 메시지 전송
+  async sendMessage(sessionId: string, data: SendMessageRequest): Promise<SendMessageResponse> {
+    try {
+      return await apiClient.post<SendMessageResponse>(`/chat/sessions/${sessionId}/messages`, data);
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+
+  // 세션 삭제
+  async deleteSession(sessionId: string): Promise<{ message: string }> {
+    try {
+      return await apiClient.delete<{ message: string }>(`/chat/sessions/${sessionId}`);
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  // 세션의 모든 메시지 조회
+  async getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
+    try {
+      return await apiClient.get<ChatMessage[]>(`/chat/sessions/${sessionId}/messages`);
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  // 개인화된 인사 메시지 조회 (백그라운드 처리용)
+  async getPersonalizedGreeting(sessionId: string): Promise<{ persona_type: string; persona_id: number; greeting: string }> {
+    try {
+      return await apiClient.get<{ persona_type: string; persona_id: number; greeting: string }>(`/chat/sessions/${sessionId}/personalized-greeting`);
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  // 에러 처리
+  private handleError(error: any): ApiError {
+    if (error.response && error.response.data) {
+      return {
+        error: error.response.data.error || 'API 오류가 발생했습니다.',
+        detail: error.response.data.detail,
+        code: error.response.status
+      };
+    }
+    return {
+      error: error.message || '알 수 없는 오류가 발생했습니다.',
+      code: 500
+    };
+  }
+
+  // 백엔드 메시지를 프론트엔드 형식으로 변환
+  static convertToFrontendMessage(message: ChatMessage) {
+    // created_at 값이 유효한지 확인하고 안전하게 처리
+    let timestamp = '';
+    try {
+      if (message.created_at) {
+        const date = new Date(message.created_at);
+        if (!isNaN(date.getTime())) {
+          timestamp = date.toLocaleTimeString("ko-KR", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          });
+        } else {
+          // created_at이 유효하지 않으면 현재 시간 사용
+          timestamp = new Date().toLocaleTimeString("ko-KR", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          });
+        }
+      } else {
+        // created_at이 없으면 현재 시간 사용
+        timestamp = new Date().toLocaleTimeString("ko-KR", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+      }
+    } catch (error) {
+      console.error('timestamp 변환 오류:', error, 'created_at:', message.created_at);
+      // 오류 발생시 현재 시간 사용
+      timestamp = new Date().toLocaleTimeString("ko-KR", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+    }
+
+    return {
+      id: message.chat_messages_id,
+      type: message.sender_type,
+      content: message.content,
+      timestamp: timestamp
+    };
+  }
+
+  // 프론트엔드 메시지를 백엔드 형식으로 변환
+  static convertFromFrontendMessage(message: any, sessionId: string): Partial<ChatMessage> {
+    return {
+      session_id: sessionId,
+      sender_type: message.type,
+      content: message.content,
+      created_at: new Date().toISOString()
+    };
+  }
+}
+
+export const chatService = new ChatService();
