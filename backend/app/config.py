@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
     
     # CORS 설정
-    ALLOWED_ORIGINS: list = ["http://localhost:3000", "http://localhost:8080"]
+    ALLOWED_ORIGINS: list = ["http://localhost:80", "http://localhost:8080"]
     
     class Config:
         env_file = ".env"
