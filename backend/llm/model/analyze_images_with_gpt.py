@@ -15,7 +15,7 @@ from opensearch_client import OpenSearchEmbeddingClient
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
+OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST")
 IMAGE_DIR = os.path.join(os.path.dirname(__file__), '../detection_results/images')
 RESULT_DIR = os.path.join(os.path.dirname(__file__), '../detection_results/results')
 
@@ -26,12 +26,13 @@ try:
     opensearch_modules_dir = os.path.join(os.path.dirname(__file__), '../opensearch_modules')
     os.chdir(opensearch_modules_dir)
     
-    opensearch_client = OpenSearchEmbeddingClient(host='3.39.30.211')
+    opensearch_client = OpenSearchEmbeddingClient(host=OPENSEARCH_HOST)
     RAG_INDEX_NAME = "psychology_analysis"
     
     # 작업 디렉토리 복구
     os.chdir(original_cwd)
     print("OpenSearch RAG 시스템 초기화 완료")
+    
 except Exception as e:
     print(f"OpenSearch 초기화 실패: {e}")
     opensearch_client = None
