@@ -160,8 +160,10 @@ async def google_callback(
         # 임시로 Redis나 메모리에 저장하는 대신 간단히 쿠키 사용
         from fastapi.responses import RedirectResponse
         
+        import os
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:80")
         response = RedirectResponse(
-            url=f"http://localhost:80/auth-callback?session={session_id}&is_new={str(result.is_new_user).lower()}"
+            url=f"{frontend_url}/auth-callback?session={session_id}&is_new={str(result.is_new_user).lower()}"
         )
         
         # 쿠키에 토큰 저장 (HttpOnly, Secure 설정)
