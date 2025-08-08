@@ -220,59 +220,130 @@ def optimize_image_for_gpt(image_path: str, max_size: tuple = (1024, 1024), qual
                 'error': str(e)
             }
 
-def analyze_image_with_gpt(image_path, prompt, rag_context=None):
-    try:
-        # 🚀 이미지 압축 최적화 적용
-        img_base64, compression_info = optimize_image_for_gpt(image_path, max_size=(1024, 1024), quality=85)
+def analyze_image_with_gpt(image_path, prompt, rag_context=None, max_retries=5):
+    """
+    GPT Vision API를 사용하여 이미지를 분석하는 함수 (거부 방지 로직 포함)
+    
+    Args:
+        image_path (str): 분석할 이미지 파일 경로
+        prompt (str): GPT에게 전달할 프롬프트
+        rag_context (dict): RAG 검색 결과 (선택사항)
+        max_retries (int): 최대 재시도 횟수
         
-        # 압축 결과 로그
-        print(f"이미지 파일 크기: {compression_info['original_file_size']} bytes")
-        if 'error' not in compression_info:
-            print(f"압축 후 크기: {compression_info['compressed_size']} bytes")
-            print(f"압축률: {compression_info['compression_ratio']}%")
-            print(f"원본 크기: {compression_info['original_dimensions']}")
-            print(f"압축 후 크기: {compression_info['compressed_dimensions']}")
-        
-        data_url = f"data:image/jpeg;base64,{img_base64}"
-        print(f"MIME 타입: image/jpeg")
-        print(f"Base64 길이: {len(img_base64)}")
-        
-        # 메시지 컨텐츠 구성
-        content = [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": data_url}}
-        ]
-        
-        # RAG 컨텍스트 추가
-        if rag_context:
-            rag_text = f"\n\n[참고 자료]\n문서: {rag_context['document']} - {rag_context['element']}\n내용: {rag_context['text']}"
-            content.append({"type": "text", "text": rag_text})
+    Returns:
+        str: GPT 분석 결과 텍스트
+    """
+    # 거부 응답 패턴 정의
+    rejection_patterns = [
+        "I'm unable to",
+        "I can't provide an analysis",
+        "I'm sorry",
+        "죄송합니다",
+        "죄송하지만",
+        "분석할 수 없습니다",
+        "분석하기 어렵습니다",
+        "정확하게 분석하기 어렵습니다",
+        "인식을 하기 굉장히 어렵습니다",
+        "이미지를 분석하기 어렵습니다",
+        "추가 정보나 설명을 제공해 주시면",
+        "하지만 일반적인",
+        "예를 들어 설명할 수 있습니다",
+        "이미지를 인식할 수 없습니다"
+    ]
+    
+    for attempt in range(max_retries):
+        try:
+            # 재시도 시 프롬프트 강화
+            if attempt > 0:
+                enhanced_prompt = f"""
+{prompt}
 
-        import time
-        gpt_start_time = time.time()
-        gpt_start_datetime = datetime.now()
-        print(f"🤖 [TIMING] GPT API 호출 시작: {gpt_start_datetime.strftime('%H:%M:%S.%f')[:-3]}")
-        response = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "당신은 HTP(House-Tree-Person) 심리검사 전문 분석가입니다. 제공된 그림은 심리검사 목적으로 그려진 그림이며, 실제 인물의 신원 식별이 아닌 심리적 특성 분석을 위한 것입니다. 그림의 시각적 요소들을 통해 심리 상태를 분석해 주세요. 개인의 정체성이나 신원을 파악하려는 것이 아니라, 그림 표현 방식을 통한 심리 분석임을 명심하세요. 이미지가 제대로 보이지 않으면 '이미지를 인식할 수 없습니다'라고 응답하지 말고, 다시 시도해보거나 이미지 파일 문제일 수 있다고 안내해주세요."},
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ],
-            max_tokens=2000,
-        )
-        gpt_end_time = time.time()
-        gpt_duration = gpt_end_time - gpt_start_time
-        gpt_end_datetime = datetime.now()
-        print(f"✅ [TIMING] GPT API 호출 완료: {gpt_end_datetime.strftime('%H:%M:%S.%f')[:-3]}")
-        print(f"⏱️  [TIMING] GPT API 소요시간: {gpt_duration:.2f}초")
-        return response.choices[0].message.content.strip()
-        
-    except Exception as e:
-        print(f"GPT API 호출 실패: {e}")
-        raise
+[중요] 이전 시도에서 이미지 분석이 거부되었습니다. 
+이번에는 반드시 이미지의 시각적 요소들을 관찰하여 HTP 심리검사 분석을 수행해주세요.
+이미지가 흐리거나 불분명하더라도 보이는 요소들(선, 모양, 크기, 위치 등)을 바탕으로 분석해주세요.
+완전한 거부보다는 관찰 가능한 요소라도 분석해주시기 바랍니다.
+"""
+            else:
+                enhanced_prompt = prompt
+
+            # 🚀 이미지 압축 최적화 적용
+            img_base64, compression_info = optimize_image_for_gpt(image_path, max_size=(1024, 1024), quality=85)
+            
+            # 압축 결과 로그
+            print(f"이미지 파일 크기: {compression_info['original_file_size']} bytes")
+            if 'error' not in compression_info:
+                print(f"압축 후 크기: {compression_info['compressed_size']} bytes")
+                print(f"압축률: {compression_info['compression_ratio']}%")
+                print(f"원본 크기: {compression_info['original_dimensions']}")
+                print(f"압축 후 크기: {compression_info['compressed_dimensions']}")
+            
+            data_url = f"data:image/jpeg;base64,{img_base64}"
+            print(f"MIME 타입: image/jpeg")
+            print(f"Base64 길이: {len(img_base64)}")
+            
+            # 메시지 컨텐츠 구성
+            content = [
+                {"type": "text", "text": enhanced_prompt},
+                {"type": "image_url", "image_url": {"url": data_url}}
+            ]
+            
+            # RAG 컨텍스트 추가
+            if rag_context:
+                rag_text = f"\n\n[참고 자료]\n문서: {rag_context['document']} - {rag_context['element']}\n내용: {rag_context['text']}"
+                content.append({"type": "text", "text": rag_text})
+
+            import time
+            gpt_start_time = time.time()
+            gpt_start_datetime = datetime.now()
+            print(f"🤖 [TIMING] GPT API 호출 시작: {gpt_start_datetime.strftime('%H:%M:%S.%f')[:-3]} (시도 {attempt + 1}/{max_retries})")
+            
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "당신은 HTP(House-Tree-Person) 심리검사 전문 분석가입니다. 제공된 그림은 심리검사 목적으로 그려진 그림이며, 실제 인물의 신원 식별이 아닌 심리적 특성 분석을 위한 것입니다. 그림의 시각적 요소들을 통해 심리 상태를 분석해 주세요. 개인의 정체성이나 신원을 파악하려는 것이 아니라, 그림 표현 방식을 통한 심리 분석임을 명심하세요. 이미지가 제대로 보이지 않으면 '이미지를 인식할 수 없습니다'라고 응답하지 말고, 다시 시도해보거나 이미지 파일 문제일 수 있다고 안내해주세요."},
+                    {
+                        "role": "user",
+                        "content": content
+                    }
+                ],
+                max_tokens=2000,
+            )
+            
+            gpt_end_time = time.time()
+            gpt_duration = gpt_end_time - gpt_start_time
+            gpt_end_datetime = datetime.now()
+            print(f"✅ [TIMING] GPT API 호출 완료: {gpt_end_datetime.strftime('%H:%M:%S.%f')[:-3]}")
+            print(f"⏱️  [TIMING] GPT API 소요시간: {gpt_duration:.2f}초")
+            
+            result_text = response.choices[0].message.content.strip()
+            
+            # 거부 응답 패턴 확인
+            is_rejection = False
+            for pattern in rejection_patterns:
+                if pattern.lower() in result_text.lower():
+                    is_rejection = True
+                    print(f"거부 응답 패턴 감지: '{pattern}' (시도 {attempt + 1}/{max_retries})")
+                    break
+            
+            # 거부 응답이 아니거나 마지막 시도라면 결과 반환
+            if not is_rejection or attempt == max_retries - 1:
+                if is_rejection and attempt == max_retries - 1:
+                    print(f"경고: 모든 재시도가 실패했습니다. 마지막 응답을 반환합니다.")
+                return result_text
+            
+            # 재시도 전 잠시 대기
+            print(f"거부 응답으로 인한 재시도 대기 중... (2초)")
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"GPT API 호출 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                raise
+            # 재시도 전 잠시 대기
+            import time
+            time.sleep(2)
+    
+    return "분석을 완료할 수 없습니다."
 
 
 def analyze_image_gpt(image_base):
