@@ -23,7 +23,7 @@ export interface LoginResponse {
 }
 
 class AuthService {
-  private baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  private baseUrl = process.env.REACT_APP_API_URL || 'http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com/api';
   private clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID || '689738363605-i65c3ar97vnts2jeh648dj3v9b23njq4.apps.googleusercontent.com';
   private isGoogleLoaded = false;
 

@@ -33,7 +33,7 @@ const PipelineHealthCheck: React.FC<PipelineHealthCheckProps> = ({ isVisible, on
     try {
       // API 기본 URL 설정 (개발 환경)
       const baseUrl = process.env.NODE_ENV === 'development' 
-        ? 'http://localhost:8000' 
+        ? 'http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com/api' 
         : '';
       
       const url = `${baseUrl}/api/v1/pipeline/pipeline-health`;

@@ -161,7 +161,7 @@ async def google_callback(
         from fastapi.responses import RedirectResponse
         
         import os
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:80")
+        frontend_url = os.getenv("FRONTEND_URL", "http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com")
         response = RedirectResponse(
             url=f"{frontend_url}/auth-callback?session={session_id}&is_new={str(result.is_new_user).lower()}"
         )

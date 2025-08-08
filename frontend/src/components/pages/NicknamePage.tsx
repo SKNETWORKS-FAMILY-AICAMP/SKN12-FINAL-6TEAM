@@ -53,7 +53,7 @@ const NicknamePage: React.FC<NicknamePageProps> = ({ onComplete }) => {
 
     try {
       // 백엔드 API로 닉네임 중복 검사
-      const response = await fetch(`${process.env.REACT_APP_API_URL || "http://localhost:8000"}/auth/check-nickname`, {
+      const response = await fetch(`${process.env.REACT_APP_API_URL || "http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com/api"}/auth/check-nickname`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

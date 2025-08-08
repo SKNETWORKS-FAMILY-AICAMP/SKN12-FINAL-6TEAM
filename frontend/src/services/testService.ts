@@ -124,7 +124,7 @@ class TestService {
       formData.append('file', file);
 
       // FormData를 사용할 때는 Content-Type을 자동으로 설정되도록 해야 함
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:8000'}${this.BASE_PATH}/drawing-tests/upload`, {
+      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com/api'}${this.BASE_PATH}/drawing-tests/upload`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('access_token')}`
@@ -152,7 +152,7 @@ class TestService {
     }
     
     // 로컬 경로를 절대 URL로 변환
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+    const baseUrl = process.env.REACT_APP_API_URL || 'http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com/api';
     // 'result/images/filename.jpg' -> '/images/filename.jpg'
     const relativePath = imageUrl.replace('result/', '');
     return `${baseUrl}/${relativePath}`;
