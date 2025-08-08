@@ -434,4 +434,4 @@ def main():
     print("분석이 완료되었습니다.")
 
 if __name__ == "__main__":
-    main() 
+    main()
