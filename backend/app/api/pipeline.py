@@ -180,7 +180,7 @@ async def validate_and_process_image(
     # 저장 경로 설정
     current_file = Path(__file__).resolve()  # 절대 경로로 변환
     desktop_path = current_file.parents[5] # Desktop 경로
-    upload_dir = desktop_path / "tmp" /"result" / "images"
+    upload_dir = desktop_path / "result" / "images"
     upload_dir.mkdir(parents=True, exist_ok=True)
     save_path = upload_dir / f"{unique_id}.jpg"
     
