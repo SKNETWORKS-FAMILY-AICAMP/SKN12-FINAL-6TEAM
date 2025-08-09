@@ -9,6 +9,9 @@ services:
       - GOOGLE_REDIRECT_URI=http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com/auth/google/callback
     env_file:
       - ./backend/.env
+    volumes:
+      - ./uploads:/app/uploads
+      - ./result:/app/result
     networks:
       - frontback-network
     depends_on:
