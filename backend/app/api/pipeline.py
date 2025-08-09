@@ -1,28 +1,36 @@
 """
-거북이상담소 HTP 심리검사 파이프라인 API
-이 모듈은 프론트엔드에서 이미지 분석 요청을 처리하는 API 엔드포인트를 제공합니다.
-TestPage.tsx에서 버튼 클릭 시 호출되는 통합 파이프라인 인터페이스입니다.
+거북이상담소 HTP 심리검사 파이프라인 API 
+이미지 분석 요청을 처리하는 API 엔드포인트
 """
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
+from enum import Enum
+from dataclasses import dataclass
 import os
 import uuid
-import json
-import asyncio
+import time
+import logging
 from datetime import datetime
 from pathlib import Path
 
+# PIL imports
+from PIL import Image as PILImage
+from PIL import ImageOps
+import io
+
 # 내부 모듈
-from ..database import get_db
+from ..database import get_db, SessionLocal
 from ..models.test import DrawingTest, DrawingTestResult
-from ..models.user import UserInformation
-from ..schemas.test import DrawingTestCreate, DrawingTestResultCreate
 from .auth import get_current_user
 
-# HTP 파이프라인 모듈 (절대 경로로 import)
+# 로거 설정
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# HTP 파이프라인 모듈 import
 import sys
 project_root = Path(__file__).parent.parent.parent
 pipeline_module_path = project_root / 'llm' / 'model'
@@ -30,51 +38,223 @@ sys.path.insert(0, str(pipeline_module_path))
 
 try:
     from main import HTPAnalysisPipeline, PipelineStatus, PipelineResult
-    PIPELINE_IMPORT_ERROR = None
-    print("✅ HTP 파이프라인 모듈 import 성공")
+    PIPELINE_AVAILABLE = True
+    logger.info("✅ HTP 파이프라인 모듈 import 성공")
 except Exception as e:
-    import sys
-    error_msg = str(e)
-    print(f"❌ HTP 파이프라인 import 실패: {e}", file=sys.stderr)
-    
-    if "numpy.dtype size changed" in error_msg:
-        print(f"💡 numpy/pandas 버전 충돌 해결방법:", file=sys.stderr)
-        print(f"   conda install -c conda-forge numpy pandas --force-reinstall", file=sys.stderr)
-        print(f"   또는 pip uninstall numpy pandas -y && pip install numpy pandas", file=sys.stderr)
-    else:
-        print(f"💡 일반적인 해결방법:", file=sys.stderr)
-        print(f"   pip install pandas transformers ultralytics torch opencv-python scikit-learn", file=sys.stderr)
-    
     HTPAnalysisPipeline = None
     PipelineStatus = None
     PipelineResult = None
-    PIPELINE_IMPORT_ERROR = error_msg
+    PIPELINE_AVAILABLE = False
+    logger.error(f"❌ HTP 파이프라인 import 실패: {e}")
 
 router = APIRouter()
 
-# 전역 파이프라인 인스턴스
-pipeline_instance= None
+class PersonalityType(Enum):
+    """성격 유형 Enum"""
+    DRIVING = (1, "추진형", "dog_scores")
+    INTROSPECTIVE = (2, "내면형", "cat_scores")
+    RELATIONAL = (3, "관계형", "rabbit_scores")
+    HEDONISTIC = (4, "쾌락형", "bear_scores")
+    STABLE = (5, "안정형", "turtle_scores")
+    
+    def __init__(self, id_: int, korean_name: str, score_field: str):
+        self.id = id_
+        self.korean_name = korean_name
+        self.score_field = score_field
 
-def get_pipeline():
-    """파이프라인 인스턴스 가져오기 (싱글톤 패턴)"""
-    global pipeline_instance
-    if pipeline_instance is None:
-        if HTPAnalysisPipeline is None:
-            missing_packages = ["pandas", "transformers", "ultralytics", "torch", "opencv-python", "scikit-learn"]
+PERSONALITY_MAPPING = {pt.korean_name: pt.id for pt in PersonalityType}
+PERSONALITY_REVERSE_MAPPING = {pt.id: pt.korean_name for pt in PersonalityType}
+SCORE_FIELD_MAPPING = {pt.korean_name: pt.score_field for pt in PersonalityType}
+
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+IMAGE_QUALITY = 95
+
+# ============= Data Classes =============
+@dataclass
+class AnalysisProgress:
+    """분석 진행 상황 데이터 클래스"""
+    detection_completed: bool = False
+    analysis_completed: bool = False
+    classification_completed: bool = False
+    
+    @property
+    def current_step(self) -> int:
+        if not self.detection_completed:
+            return 1
+        elif not self.analysis_completed:
+            return 2
+        elif not self.classification_completed:
+            return 3
+        return 3
+    
+    @property
+    def completed_steps(self) -> int:
+        return sum([self.detection_completed, self.analysis_completed, self.classification_completed])
+    
+    @property
+    def is_complete(self) -> bool:
+        return all([self.detection_completed, self.analysis_completed, self.classification_completed])
+
+# ============= Pipeline Manager =============
+class PipelineManager:
+    """파이프라인 싱글톤 관리자"""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.pipeline = None
+        return cls._instance
+    
+    def get_pipeline(self) -> HTPAnalysisPipeline:
+        """파이프라인 인스턴스 가져오기"""
+        if not PIPELINE_AVAILABLE:
             raise HTTPException(
-                status_code=503,  # Service Unavailable
+                status_code=503,
                 detail={
                     "error": "HTP 분석 파이프라인을 사용할 수 없습니다.",
-                    "reason": "필수 패키지가 설치되지 않았습니다.",
-                    "missing_packages": missing_packages,
-                    "install_command": f"pip install {' '.join(missing_packages)}",
+                    "reason": "파이프라인 모듈이 로드되지 않았습니다.",
                     "status": "service_unavailable"
                 }
             )
-        pipeline_instance = HTPAnalysisPipeline()
-    return pipeline_instance
+        
+        if self.pipeline is None:
+            self.pipeline = HTPAnalysisPipeline()
+            logger.info("파이프라인 인스턴스 생성 완료")
+        
+        return self.pipeline
 
+pipeline_manager = PipelineManager()
 
+# ============= Helper Functions =============
+async def validate_and_process_image(
+    upload_file: UploadFile
+) -> tuple[str, Path, PILImage.Image]:
+    """
+    이미지 파일 검증 및 처리
+    
+    Returns:
+        tuple: (unique_id, save_path, pil_image)
+    """
+    # 파일 검증
+    if not upload_file.content_type or not upload_file.content_type.startswith('image/'):
+        raise HTTPException(
+            status_code=422,
+            detail="지원하지 않는 파일 형식입니다. 이미지 파일을 업로드해주세요."
+        )
+    
+    # 확장자 검증
+    file_extension = Path(upload_file.filename).suffix.lower()
+    if file_extension not in ALLOWED_IMAGE_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"지원하지 않는 이미지 형식입니다. {', '.join(ALLOWED_IMAGE_EXTENSIONS)} 지원"
+        )
+    
+    # 이미지 로드 및 처리
+    image_data = await upload_file.read()
+    
+    # 파일 크기 검증
+    if len(image_data) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"파일 크기가 {MAX_FILE_SIZE // (1024*1024)}MB를 초과합니다."
+        )
+    
+    pil_image = PILImage.open(io.BytesIO(image_data))
+    
+    # EXIF 회전 정보 적용
+    try:
+        pil_image = ImageOps.exif_transpose(pil_image)
+    except Exception:
+        pass  # EXIF 정보가 없어도 무시
+    
+    # RGB 모드로 변환
+    if pil_image.mode != 'RGB':
+        pil_image = pil_image.convert('RGB')
+    
+    # 고유 ID 생성
+    unique_id = str(uuid.uuid4())
+    
+    # 저장 경로 설정
+    current_file = Path(__file__).resolve()  # 절대 경로로 변환
+    desktop_path = current_file.parents[5] # Desktop 경로
+    upload_dir = desktop_path / "tmp" /"result" / "images"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    save_path = upload_dir / f"{unique_id}.jpg"
+    
+    return unique_id, save_path, pil_image
+
+def save_images(
+    pil_image: PILImage.Image,
+    save_path: Path,
+    pipeline_path: Optional[Path] = None
+) -> None:
+    """이미지 저장"""
+    # 메인 경로에 저장
+    pil_image.save(save_path, 'JPEG', quality=IMAGE_QUALITY)
+    
+    # 파이프라인 경로에도 저장 (있는 경우)
+    if pipeline_path:
+        pipeline_path.parent.mkdir(parents=True, exist_ok=True)
+        pil_image.save(pipeline_path, 'JPEG', quality=IMAGE_QUALITY)
+
+def extract_analysis_results(result: Any) -> Dict[str, Any]:
+    """파이프라인 결과에서 분석 데이터 추출"""
+    # 실패 시 None 반환으로 명확히 표시
+    data = {
+        'persona_type_id': None,  
+        'summary_text': None,
+        'persona_scores': None,
+        'analysis_success': False,
+        'error_message': "분석 결과를 처리할 수 없습니다."
+    }
+    
+    if not result or not hasattr(result, 'status'):
+        data['error_message'] = "파이프라인 결과가 없습니다."
+        return data
+    
+    # 성공적인 결과 처리
+    if result.status == PipelineStatus.SUCCESS:
+        data['analysis_success'] = True
+        data['error_message'] = None
+        data['persona_scores'] = {pt.score_field: 0.0 for pt in PersonalityType}
+        
+        # 키워드 분석 결과 처리
+        if hasattr(result, 'keyword_analysis') and result.keyword_analysis:
+            probabilities = result.keyword_analysis.get('probabilities', {})
+            if probabilities:
+                # 가장 높은 확률의 성격 유형
+                highest_type = max(probabilities.items(), key=lambda x: x[1])[0]
+                data['persona_type_id'] = PERSONALITY_MAPPING.get(highest_type)
+                
+                # 점수 매핑
+                for p_type, score in probabilities.items():
+                    field = SCORE_FIELD_MAPPING.get(p_type)
+                    if field:
+                        data['persona_scores'][field] = min(score, 999.99)
+        
+        # 심리 분석 텍스트
+        if hasattr(result, 'psychological_analysis') and result.psychological_analysis:
+            psych = result.psychological_analysis
+            if isinstance(psych, dict) and psych.get('result_text'):
+                data['summary_text'] = psych['result_text']
+        
+        # 필수 데이터 검증
+        if data['persona_type_id'] is None:
+            data['analysis_success'] = False
+            data['error_message'] = "성격 유형을 결정할 수 없습니다."
+        if data['summary_text'] is None:
+            data['summary_text'] = "심리 분석 결과를 생성할 수 없습니다."
+    
+    # 오류 메시지 처리
+    elif hasattr(result, 'error_message'):
+        data['error_message'] = f"분석 오류: {result.error_message}"
+    
+    return data
+
+# ============= API Endpoints =============
 @router.post("/analyze-image")
 async def analyze_drawing_image(
     background_tasks: BackgroundTasks,
@@ -84,124 +264,37 @@ async def analyze_drawing_image(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    그림 이미지 분석 API
+    """그림 이미지 분석 API"""
     
-    TestPage.tsx의 '분석 시작하기' 버튼에서 호출됩니다.
-    업로드된 이미지를 HTP 심리검사 파이프라인으로 처리합니다.
-    
-    Args:
-        file: 업로드된 이미지 파일
-        description: 사용자가 입력한 그림 설명 (선택사항)
-        db: 데이터베이스 세션
-        current_user: 현재 로그인한 사용자
-        
-    Returns:
-        JSON: 분석 작업 시작 응답 및 작업 ID
-    """
-    # 성능 측정 시작
-    import time
     start_time = time.time()
-    start_datetime = datetime.fromtimestamp(start_time)
-    print(f"🚀 [PERFORMANCE] 그림 분석 시작")
-    print(f"🕐 [PERFORMANCE] 시작시간: {start_datetime.strftime('%H:%M:%S.%f')[:-3]} ({start_time:.3f}초)")
-    
-    # file 또는 image 중 하나를 사용 (프론트엔드 호환성)
     upload_file = file or image
     
-    print(f"🔍 API 엔드포인트 진입 - 함수 시작")
-    print(f"📋 요청 파라미터 정보:")
-    print(f"  - file: {file}")
-    print(f"  - image: {image}")
-    print(f"  - upload_file: {upload_file}")
-    print(f"  - filename: {getattr(upload_file, 'filename', 'N/A') if upload_file else 'N/A'}")
-    print(f"  - content_type: {getattr(upload_file, 'content_type', 'N/A') if upload_file else 'N/A'}")
-    print(f"  - description: {description}")
-    print(f"  - current_user: {current_user}")
+    if not upload_file:
+        raise HTTPException(
+            status_code=422,
+            detail="이미지 파일이 업로드되지 않았습니다."
+        )
     
     try:
-        if not upload_file:
-            print(f"❌ 검증 실패: 파일이 업로드되지 않음")
-            raise HTTPException(
-                status_code=422,
-                detail="이미지 파일이 업로드되지 않았습니다. 'file' 또는 'image' 필드에 파일을 첨부해주세요."
-            )
+        # 이미지 검증 및 처리
+        unique_id, save_path, pil_image = await validate_and_process_image(upload_file)
         
-        print(f"🚀 이미지 분석 요청 시작 - 사용자: {current_user['user_id']}")
-        print(f"📁 이미지 파일: {upload_file.filename}, 크기: {upload_file.size if upload_file.size else 'unknown'}, 타입: {upload_file.content_type}")
-        print(f"📝 설명: {description}")
+        # 파이프라인 경로 설정
+        pipeline_path = None
+        if PIPELINE_AVAILABLE:
+            try:
+                pipeline = pipeline_manager.get_pipeline()
+                pipeline_path = pipeline.config.test_img_dir / f"{unique_id}.jpg"
+            except Exception as e:
+                logger.warning(f"파이프라인 경로 설정 실패: {e}")
         
-        if not upload_file.filename:
-            print(f"❌ 검증 실패: 파일명이 없음")
-            raise HTTPException(
-                status_code=422,
-                detail="이미지 파일명이 없습니다."
-            )
+        # 이미지 저장
+        save_images(pil_image, save_path, pipeline_path)
         
-        # 1. 파일 검증
-        if not upload_file.content_type or not upload_file.content_type.startswith('image/'):
-            print(f"❌ 검증 실패: 잘못된 content-type: {upload_file.content_type}")
-            raise HTTPException(
-                status_code=422,
-                detail="지원하지 않는 파일 형식입니다. 이미지 파일을 업로드해주세요."
-            )
-        
-        # 2. 고유 파일명 생성
-        file_extension = Path(upload_file.filename).suffix.lower()
-        if file_extension not in ['.jpg', '.jpeg', '.png', '.bmp', '.gif']:
-            print(f"❌ 검증 실패: 지원하지 않는 확장자: {file_extension}")
-            raise HTTPException(
-                status_code=422,
-                detail="지원하지 않는 이미지 형식입니다. (.jpg, .jpeg, .png, .bmp, .gif 지원)"
-            )
-        
-        unique_id = str(uuid.uuid4())
-        image_filename = f"{unique_id}{file_extension}"
-        
-        # 3. 업로드 디렉토리 설정 (backend/result/images)
-        backend_root = Path(__file__).parent.parent.parent
-        upload_dir = backend_root / "result" / "images"
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 4. 파일 저장 (JPG로 통일)
-        image_path = upload_dir / f"{unique_id}.jpg"
-        
-        # 5. 파이프라인용 디렉토리에도 복사 (기존 분석 파이프라인 호환성)
-        pipeline = get_pipeline()
-        pipeline_upload_dir = pipeline.config.test_img_dir
-        pipeline_upload_dir.mkdir(parents=True, exist_ok=True)
-        pipeline_image_path = pipeline_upload_dir / f"{unique_id}.jpg"
-        
-        # 이미지를 JPG 형식으로 변환하여 저장
-        import PIL.Image as PILImage
-        from PIL import ImageOps
-        import io
-        
-        # 업로드된 파일을 PIL Image로 로드
-        image_data = await upload_file.read()
-        pil_image = PILImage.open(io.BytesIO(image_data))
-        
-        # EXIF 회전 정보 자동 적용 (스마트폰 사진 회전 문제 해결)
-        try:
-            pil_image = ImageOps.exif_transpose(pil_image)
-            print(f"✅ EXIF 회전 정보 적용 완료")
-        except Exception as e:
-            print(f"⚠️ EXIF 회전 정보 적용 실패 (무시 가능): {e}")
-        
-        # RGB 모드로 변환 (RGBA 등 다른 모드 처리)
-        if pil_image.mode != 'RGB':
-            pil_image = pil_image.convert('RGB')
-        
-        # JPG로 저장 (backend/result/images)
-        pil_image.save(image_path, 'JPEG', quality=95)
-        
-        # 파이프라인용 디렉토리에도 저장
-        pil_image.save(pipeline_image_path, 'JPEG', quality=95)
-        
-        # 6. 데이터베이스에 테스트 레코드 생성
+        # DB 레코드 생성
         drawing_test = DrawingTest(
             user_id=current_user["user_id"],
-            image_url=f"result/images/{unique_id}.jpg",  # backend/result/images 경로
+            image_url=f"result/images/{unique_id}.jpg",
             submitted_at=datetime.now()
         )
         
@@ -209,7 +302,7 @@ async def analyze_drawing_image(
         db.commit()
         db.refresh(drawing_test)
         
-        # 7. 백그라운드에서 분석 실행
+        # 백그라운드 태스크 실행
         background_tasks.add_task(
             run_analysis_pipeline,
             unique_id,
@@ -217,8 +310,11 @@ async def analyze_drawing_image(
             description
         )
         
+        elapsed = time.time() - start_time
+        logger.info(f"이미지 업로드 처리 완료: {elapsed:.2f}초")
+        
         return JSONResponse(
-            status_code=202,  # Accepted
+            status_code=202,
             content={
                 "message": "이미지 분석이 시작되었습니다.",
                 "test_id": drawing_test.test_id,
@@ -231,78 +327,42 @@ async def analyze_drawing_image(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"이미지 분석 요청 오류: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"이미지 분석 요청 처리 중 오류가 발생했습니다: {str(e)}"
         )
-
 
 def run_analysis_pipeline(
     unique_id: str,
     test_id: int,
     description: Optional[str]
 ):
-    """
-    백그라운드에서 실행되는 HTP 분석 파이프라인
+    """백그라운드 분석 파이프라인 실행"""
     
-    Args:
-        unique_id: 고유 이미지 ID
-        test_id: 데이터베이스 테스트 ID
-        description: 사용자 설명
-    """
-    # 백그라운드 태스크용 새 DB 세션 생성 (HTTP 요청 세션과 독립적)
-    from ..database import SessionLocal
-    import time  # time 모듈 import 추가
     db = SessionLocal()
+    start_time = time.time()
     
     try:
-        analysis_start_time = time.time()
-        analysis_start_datetime = datetime.fromtimestamp(analysis_start_time)
-        print(f"🚀 [PERFORMANCE] 백그라운드 분석 시작: {unique_id}")
-        print(f"🕐 [PERFORMANCE] 분석 시작시간: {analysis_start_datetime.strftime('%H:%M:%S.%f')[:-3]} ({analysis_start_time:.3f}초)")
+        logger.info(f"백그라운드 분석 시작: {unique_id}")
         
         # 파이프라인 실행
-        pipeline = get_pipeline()
-        result: PipelineResult = pipeline.analyze_image(unique_id)
+        pipeline = pipeline_manager.get_pipeline()
+        result = pipeline.analyze_image(unique_id)
         
-        analysis_end_time = time.time()
-        analysis_duration = analysis_end_time - analysis_start_time
-        analysis_end_datetime = datetime.fromtimestamp(analysis_end_time)
-        print(f"📊 [PERFORMANCE] 파이프라인 실행 완료: {result.status}")
-        print(f"🕐 [PERFORMANCE] 분석 완료시간: {analysis_end_datetime.strftime('%H:%M:%S.%f')[:-3]} ({analysis_end_time:.3f}초)")
-        print(f"⏱️  [PERFORMANCE] 분석 소요시간: {analysis_duration:.2f}초 ({analysis_duration/60:.1f}분)")
+        elapsed = time.time() - start_time
+        logger.info(f"파이프라인 실행 완료: {elapsed:.2f}초")
         
-        # 결과를 데이터베이스에 저장 (동기 함수로 변경)
-        print(f"🔥 save_analysis_result_sync 함수 호출 시작 - test_id: {test_id}")
-        save_analysis_result_sync(result, test_id, description, db)
-        print(f"🔥 save_analysis_result_sync 함수 호출 완료 - test_id: {test_id}")
+        # 결과 저장
+        save_analysis_result(result, test_id, description, db)
         
-        total_end_time = time.time() 
-        total_duration = total_end_time - analysis_start_time
-        total_end_datetime = datetime.fromtimestamp(total_end_time)
-        print(f"✅ [PERFORMANCE] 분석 완료 및 저장: {unique_id}")
-        print(f"🕐 [PERFORMANCE] 최종 완료시간: {total_end_datetime.strftime('%H:%M:%S.%f')[:-3]} ({total_end_time:.3f}초)")
-        print(f"⏱️  [PERFORMANCE] 총 소요시간 (분석+저장): {total_duration:.2f}초 ({total_duration/60:.1f}분)")
+        total_elapsed = time.time() - start_time
+        logger.info(f"분석 완료 (총 {total_elapsed:.2f}초): {unique_id}")
         
     except Exception as e:
-        error_time = time.time()
-        error_duration = error_time - analysis_start_time if 'analysis_start_time' in locals() else 0
-        error_datetime = datetime.fromtimestamp(error_time)
-        print(f"❌ [PERFORMANCE] 백그라운드 분석 오류: {str(e)}")
-        print(f"🕐 [PERFORMANCE] 오류시간: {error_datetime.strftime('%H:%M:%S.%f')[:-3]} ({error_time:.3f}초)")
-        if error_duration > 0:
-            print(f"⏱️  [PERFORMANCE] 오류까지 소요시간: {error_duration:.2f}초 ({error_duration/60:.1f}분)")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"백그라운드 분석 오류: {e}")
         
-        # 오류 발생 시 데이터베이스에 오류 상태 저장
-        try:
-            pipeline = get_pipeline()
-            pipeline.logger.error(f"백그라운드 분석 오류: {str(e)}")
-        except:
-            print(f"파이프라인 로거 사용 불가: {str(e)}")
-        
-        # 빈 결과로 오류 상태 저장
+        # 오류 상태 저장
         try:
             error_result = DrawingTestResult(
                 test_id=test_id,
@@ -310,226 +370,93 @@ def run_analysis_pipeline(
                 summary_text=f"분석 중 오류가 발생했습니다: {str(e)}",
                 created_at=datetime.now()
             )
-            
             db.add(error_result)
             db.commit()
-            print(f"오류 상태 저장 완료: {test_id}")
         except Exception as db_error:
-            print(f"오류 상태 저장 실패: {db_error}")
+            logger.error(f"오류 상태 저장 실패: {db_error}")
     finally:
         db.close()
 
-
-
-def save_analysis_result_sync(
-    result: Any,  # PipelineResult가 None일 수 있으므로 Any 사용
+def save_analysis_result(
+    result: Any,
     test_id: int,
     description: Optional[str],
     db: Session
 ):
-    """
-    분석 결과를 데이터베이스에 저장 (간소화된 직접 저장 버전)
-    JSON 파일 의존성 제거하고 파이프라인 결과를 직접 활용
-    
-    Args:
-        result: 파이프라인 분석 결과
-        test_id: 데이터베이스 테스트 ID
-        description: 사용자 설명
-        db: 데이터베이스 세션
-    """
-    print(f"🔥 save_analysis_result_sync 함수 진입 - test_id: {test_id}")
+    """분석 결과 데이터베이스 저장"""
     
     try:
-        # 파이프라인 인스턴스 가져오기
-        pipeline = get_pipeline()
+        # 결과 추출
+        analysis_data = extract_analysis_results(result)
         
-        # 성격 유형을 personas 테이블의 ID로 매핑
-        personality_mapping = {
-            "추진형": 1,  # 추진이
-            "내면형": 2,  # 내면이  
-            "관계형": 3,  # 관계이
-            "쾌락형": 4,  # 쾌락이
-            "안정형": 5   # 안정이
-        }
+        # 분석 실패 시 에러 결과 저장
+        if not analysis_data['analysis_success']:
+            error_result = DrawingTestResult(
+                test_id=test_id,
+                persona_type=None,  # NULL로 저장
+                summary_text=analysis_data['error_message'],
+                created_at=datetime.now(),
+                # 모든 점수를 NULL로
+                dog_scores=None,
+                cat_scores=None,
+                rabbit_scores=None,
+                bear_scores=None,
+                turtle_scores=None
+            )
+            db.add(error_result)
+            db.commit()
+            logger.warning(f"분석 실패 결과 저장: test_id={test_id}, error={analysis_data['error_message']}")
+            return
         
-        # 기본값 설정
-        persona_type_id = 2  # 기본값: 내면형
-        summary_text = "분석을 완료할 수 없습니다."
-        persona_scores = {
-            'dog_scores': 0.0,     # 추진형
-            'cat_scores': 0.0,     # 내면형
-            'rabbit_scores': 0.0,  # 관계형
-            'bear_scores': 0.0,    # 쾌락형
-            'turtle_scores': 0.0   # 안정형
-        }
-        
-        # 파이프라인 결과가 성공적인 경우 처리
-        if (PipelineStatus is not None and 
-            hasattr(result, 'status') and 
-            result.status == PipelineStatus.SUCCESS):
-            
-            print(f"📊 파이프라인 결과 처리 시작")
-            
-            # 1. 키워드 분석 결과 우선 처리 (result 객체에 직접 포함된 경우)
-            if hasattr(result, 'keyword_analysis') and result.keyword_analysis:
-                keyword_data = result.keyword_analysis
-                print(f"🔍 키워드 분석 데이터 발견: {keyword_data}")
-                
-                predicted_personality = keyword_data.get('predicted_personality')
-                confidence = keyword_data.get('confidence', 0.0)
-                probabilities = keyword_data.get('probabilities', {})
-                
-                if probabilities:
-                    # 확률에서 가장 높은 유형 찾기
-                    highest_prob_type = max(probabilities.items(), key=lambda x: x[1])[0]
-                    highest_prob_value = probabilities[highest_prob_type]
-                    
-                    # 최고 확률 유형을 persona_type_id로 매핑
-                    persona_type_id = personality_mapping.get(highest_prob_type, 2)
-                    
-                    # 확률값을 DB 필드에 매핑 (DECIMAL(5,2) 제한에 맞게 변환: 최대 999.99)
-                    persona_scores.update({
-                        'dog_scores': round(min(probabilities.get('추진형', 0.0), 999.99), 2),
-                        'cat_scores': round(min(probabilities.get('내면형', 0.0), 999.99), 2),
-                        'rabbit_scores': round(min(probabilities.get('관계형', 0.0), 999.99), 2),
-                        'bear_scores': round(min(probabilities.get('쾌락형', 0.0), 999.99), 2),
-                        'turtle_scores': round(min(probabilities.get('안정형', 0.0), 999.99), 2)
-                    })
-                    
-                    print(f"✅ 키워드 분석 결과 적용:")
-                    print(f"  - 최고 확률 유형: {highest_prob_type} ({highest_prob_value:.1f}%)")
-                    print(f"  - persona_type_id: {persona_type_id}")
-                    print(f"  - 확률 분포: {probabilities}")
-            
-            # 2. 기본 성격 유형 결과 처리
-            elif hasattr(result, 'personality_type') and result.personality_type:
-                persona_type_id = personality_mapping.get(result.personality_type, 2)
-                print(f"📝 기본 성격 유형 적용: {result.personality_type} -> ID: {persona_type_id}")
-            
-            # 3. GPT 심리 분석 텍스트만 처리 (키워드/기본 분석 정보 제외)
-            summary_text = "성격 유형 분석이 완료되었습니다."  # 기본값
-            
-            if hasattr(result, 'psychological_analysis') and result.psychological_analysis:
-                psych_analysis = result.psychological_analysis
-                if isinstance(psych_analysis, dict) and psych_analysis.get('result_text'):
-                    # GPT 심리 분석 결과만 사용 (다른 정보 추가 없이)
-                    summary_text = psych_analysis['result_text']
-                    print(f"📄 GPT 심리 분석 텍스트만 사용 (기타 정보 제외)")
-                else:
-                    print(f"⚠️ GPT 심리 분석 결과가 비어있음")
-            else:
-                print(f"⚠️ psychological_analysis 데이터가 없음")
-            
-            print(f"📝 최종 summary_text 생성 완료 (길이: {len(summary_text)}자)")
-            print(f"📝 내용 미리보기: {summary_text[:100]}..." if len(summary_text) > 100 else f"📝 전체 내용: {summary_text}")
-        
-        # 오류 처리 (기존 로직 유지)
-        elif hasattr(result, 'error_message') and result.error_message:
-            summary_text = f"분석 중 오류가 발생했습니다: {result.error_message}"
-            print(f"❌ 오류 메시지: {result.error_message}")
-        
-        else:
-            # 기본 메시지 사용 (이미 설정된 summary_text 사용)
-            print(f"⚠️ 파이프라인 결과가 예상과 다름. result 객체 속성: {dir(result) if result else 'None'}")
-            print(f"📝 기본 summary_text 사용: {summary_text}")
-        
-        # 결과 저장 (upsert 패턴)
-        existing_result = db.query(DrawingTestResult).filter(
+        # 성공한 경우만 정상 저장
+        existing = db.query(DrawingTestResult).filter(
             DrawingTestResult.test_id == test_id
         ).first()
         
-        print(f"💾 DB 저장 전 최종 확인:")
-        print(f"  - persona_type_id: {persona_type_id}")
-        print(f"  - test_id: {test_id}")
-        print(f"  - persona_scores: {persona_scores}")
-        print(f"  - summary_text 길이: {len(summary_text)}자")
-        print(f"  - summary_text 샘플: {summary_text[:50]}..." if len(summary_text) > 50 else f"  - summary_text: {summary_text}")
-        
-        # DECIMAL 제한 검증 및 조정
-        for key, value in persona_scores.items():
-            if value > 999.99:
-                print(f"⚠️ {key} 값이 DECIMAL(5,2) 제한을 초과함: {value} -> 999.99로 조정")
-                persona_scores[key] = 999.99
-        
-        print(f"📊 조정된 persona_scores: {persona_scores}")
+        if existing:
+            # 업데이트
+            existing.persona_type = analysis_data['persona_type_id']
+            existing.summary_text = analysis_data['summary_text']
+            existing.created_at = datetime.now()
             
-        if existing_result:
-            # 기존 결과 업데이트
-            print(f"🔄 기존 결과 업데이트 - 이전 persona_type: {existing_result.persona_type}")
-            existing_result.persona_type = persona_type_id
-            existing_result.summary_text = summary_text
-            existing_result.created_at = datetime.now()
-            
-            # 확률 점수 업데이트 (안전한 값으로)
-            existing_result.dog_scores = persona_scores['dog_scores']
-            existing_result.cat_scores = persona_scores['cat_scores'] 
-            existing_result.rabbit_scores = persona_scores['rabbit_scores']
-            existing_result.bear_scores = persona_scores['bear_scores']
-            existing_result.turtle_scores = persona_scores['turtle_scores']
-            
-            print(f"🔄 업데이트할 점수들: {persona_scores}")
-            print(f"🔄 업데이트할 summary_text 미리보기: {summary_text[:100]}..." if len(summary_text) > 100 else f"🔄 업데이트할 summary_text: {summary_text}")
-            
-            print(f"🔄 업데이트 완료 - 새 persona_type: {existing_result.persona_type}")
+            # 점수 업데이트
+            for field, value in analysis_data['persona_scores'].items():
+                setattr(existing, field, value)
+                
+            logger.info(f"결과 업데이트: test_id={test_id}")
         else:
-            # 새 결과 생성
-            print(f"🆕 새 결과 생성")
-            test_result_data = {
-                'test_id': test_id,
-                'persona_type': persona_type_id,
-                'summary_text': summary_text,
-                'created_at': datetime.now(),
-                'dog_scores': persona_scores['dog_scores'],
-                'cat_scores': persona_scores['cat_scores'],
-                'rabbit_scores': persona_scores['rabbit_scores'],
-                'bear_scores': persona_scores['bear_scores'],
-                'turtle_scores': persona_scores['turtle_scores']
-            }
-            
-            print(f"🆕 새로 생성할 데이터: test_id={test_id}, persona_type={persona_type_id}")
-            print(f"🆕 점수 데이터: {persona_scores}")
-            print(f"🆕 새 summary_text 미리보기: {summary_text[:100]}..." if len(summary_text) > 100 else f"🆕 새 summary_text: {summary_text}")
-            
-            test_result = DrawingTestResult(**test_result_data)
-            db.add(test_result)
-            print(f"🆕 새 결과 DB에 추가됨 - persona_type: {persona_type_id}")
+            # 신규 생성
+            new_result = DrawingTestResult(
+                test_id=test_id,
+                persona_type=analysis_data['persona_type_id'],
+                summary_text=analysis_data['summary_text'],
+                created_at=datetime.now(),
+                **analysis_data['persona_scores']
+            )
+            db.add(new_result)
+            logger.info(f"새 결과 생성: test_id={test_id}")
         
-        print(f"💾 DB commit 시작...")
-        
-        try:
-            db.commit()
-            print(f"✅ DB commit 성공! 분석 결과가 성공적으로 저장되었습니다.")
-            print(f"✅ 최종 저장된 summary_text: GPT 심리 분석 결과만 포함 ({len(summary_text)}자)")
-        except Exception as commit_error:
-            print(f"❌ DB commit 오류: {str(commit_error)}")
-            db.rollback()
-            raise commit_error
-        
-        # 파이프라인 로거에 성공 로그 기록
-        try:
-            pipeline.logger.info(f"분석 결과 저장 성공 - test_id: {test_id}, persona_type: {persona_type_id}")
-        except:
-            print(f"로거 사용 불가, 콘솔에 기록: test_id: {test_id}, persona_type: {persona_type_id}")
+        db.commit()
+        logger.info(f"분석 결과 저장 성공: test_id={test_id}")
         
     except Exception as e:
-        print(f"❌ DB 저장 중 오류 발생: {str(e)}")
-        print(f"📊 에러 상세 정보: {repr(e)}")
-        
-        # 에러 타입별 상세 정보
-        import traceback
-        print(f"🔍 전체 에러 트레이스:")
-        traceback.print_exc()
-        
+        logger.error(f"결과 저장 오류: {e}")
         db.rollback()
         
+        # 저장 실패 시 에러 상태 기록
         try:
-            pipeline.logger.error(f"분석 결과 저장 오류: {str(e)}")
+            error_result = DrawingTestResult(
+                test_id=test_id,
+                persona_type=None,
+                summary_text=f"결과 저장 중 오류 발생: {str(e)}",
+                created_at=datetime.now()
+            )
+            db.add(error_result)
+            db.commit()
         except:
-            print(f"분석 결과 저장 오류 (로거 사용 불가): {str(e)}")
+            pass  # 에러 저장도 실패하면 포기
         
-        # 오류를 다시 발생시켜서 상위에서 처리하도록 함
         raise
-
 
 @router.get("/analysis-status/{test_id}")
 async def get_analysis_status(
@@ -537,31 +464,17 @@ async def get_analysis_status(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    분석 상태 조회 API
+    """분석 상태 조회 API"""
     
-    프론트엔드에서 분석 진행 상황을 확인할 때 사용합니다.
-    
-    Args:
-        test_id: 테스트 ID
-        db: 데이터베이스 세션
-        current_user: 현재 사용자
-        
-    Returns:
-        JSON: 분석 상태 정보
-    """
     try:
-        # 테스트 레코드 조회
+        # 테스트 조회
         drawing_test = db.query(DrawingTest).filter(
             DrawingTest.test_id == test_id,
             DrawingTest.user_id == current_user["user_id"]
         ).first()
         
         if not drawing_test:
-            raise HTTPException(
-                status_code=404,
-                detail="해당 테스트를 찾을 수 없습니다."
-            )
+            raise HTTPException(status_code=404, detail="테스트를 찾을 수 없습니다.")
         
         # 결과 조회
         test_result = db.query(DrawingTestResult).filter(
@@ -569,105 +482,72 @@ async def get_analysis_status(
         ).first()
         
         if not test_result:
-            # 파이프라인 진행상황 확인
-            pipeline = get_pipeline()
+            # 진행 중 상태 반환
+            progress = AnalysisProgress()
             
-            # 이미지 파일명 추출 (URL에서 파일명 부분만)
-            image_url = drawing_test.image_url  # "result/images/{unique_id}.jpg"
-            if image_url:
-                # "result/images/uuid.jpg" -> "uuid"
-                import re
-                match = re.search(r'result/images/(.+?)\.jpg', image_url)
-                if match:
-                    unique_id = match.group(1)
-                    status_info = pipeline.get_analysis_status(unique_id)
-                    
-                    # 단계별 진행상황 구성
-                    detection_completed = status_info.get("detection_completed", False)
-                    analysis_completed = status_info.get("analysis_completed", False)
-                    classification_completed = status_info.get("classification_completed", False)
-                    
-                    steps = [
-                        {
-                            "name": "객체 탐지",
-                            "description": "YOLO를 사용한 그림 요소 검출",
-                            "completed": detection_completed,
-                            "current": not detection_completed
-                        },
-                        {
-                            "name": "심리 분석", 
-                            "description": "GPT-4를 사용한 심리상태 분석",
-                            "completed": analysis_completed,
-                            "current": detection_completed and not analysis_completed
-                        },
-                        {
-                            "name": "성격 분류",
-                            "description": "키워드 분류기를 사용한 성격유형 분류", 
-                            "completed": classification_completed,
-                            "current": analysis_completed and not classification_completed
-                        }
-                    ]
-                    
-                    # 현재 진행 중인 단계 찾기
-                    current_step = next((i+1 for i, step in enumerate(steps) if step["current"]), 1)
-                    completed_steps = sum(1 for step in steps if step["completed"])
-                    
-                    # 모든 단계가 완료되었는지 확인
-                    if classification_completed:
-                        # 3단계 모두 완료된 경우, 최종 결과가 DB에 저장될 때까지 잠시 대기
-                        print(f"🎯 모든 단계 완료됨 - 최종 결과 대기 중")
-                        return JSONResponse(content={
-                            "test_id": test_id,
-                            "status": "processing",
-                            "message": "최종 결과 생성 중...",
-                            "steps": steps,
-                            "current_step": 3,
-                            "completed_steps": 3,
-                            "total_steps": 3,
-                            "estimated_remaining": "잠시만 기다려주세요"
-                        })
-                    
-                    return JSONResponse(content={
-                        "test_id": test_id,
-                        "status": "processing",
-                        "message": f"단계 {current_step}/3 진행 중...",
-                        "steps": steps,
-                        "current_step": current_step,
-                        "completed_steps": completed_steps,
-                        "total_steps": 3,
-                        "estimated_remaining": f"{4-completed_steps}분 소요 예상"
-                    })
+            # 파이프라인 상태 확인 (가능한 경우)
+            if PIPELINE_AVAILABLE and drawing_test.image_url:
+                try:
+                    import re
+                    match = re.search(r'result/images/(.+?)\.jpg', drawing_test.image_url)
+                    if match:
+                        unique_id = match.group(1)
+                        pipeline = pipeline_manager.get_pipeline()
+                        status_info = pipeline.get_analysis_status(unique_id)
+                        
+                        progress.detection_completed = status_info.get("detection_completed", False)
+                        progress.analysis_completed = status_info.get("analysis_completed", False)
+                        progress.classification_completed = status_info.get("classification_completed", False)
+                except Exception as e:
+                    logger.warning(f"파이프라인 상태 확인 실패: {e}")
             
-            # 기본 응답 (파일명 추출 실패 시)
+            steps = [
+                {
+                    "name": "객체 탐지",
+                    "description": "YOLO를 사용한 그림 요소 검출",
+                    "completed": progress.detection_completed,
+                    "current": progress.current_step == 1
+                },
+                {
+                    "name": "심리 분석",
+                    "description": "GPT-4o를 사용한 심리상태 분석",
+                    "completed": progress.analysis_completed,
+                    "current": progress.current_step == 2
+                },
+                {
+                    "name": "성격 분류",
+                    "description": "키워드 기반 성격유형 분류",
+                    "completed": progress.classification_completed,
+                    "current": progress.current_step == 3
+                }
+            ]
+            
             return JSONResponse(content={
                 "test_id": test_id,
-                "status": "processing", 
-                "message": "분석이 진행 중입니다...",
-                "steps": [
-                    {"name": "객체 탐지", "description": "그림 요소 검출 중", "completed": False, "current": True},
-                    {"name": "심리 분석", "description": "심리상태 분석 대기 중", "completed": False, "current": False},
-                    {"name": "성격 분류", "description": "키워드 기반 성격유형 분류 대기 중", "completed": False, "current": False}
-                ],
-                "current_step": 1,
-                "completed_steps": 0,
+                "status": "processing",
+                "message": f"단계 {progress.current_step}/3 진행 중...",
+                "steps": steps,
+                "current_step": progress.current_step,
+                "completed_steps": progress.completed_steps,
                 "total_steps": 3,
-                "estimated_remaining": "2-3분"
+                "estimated_remaining": f"{3 - progress.completed_steps}분 소요 예상"
             })
         
-        # DB에서 직접 확률 데이터 가져오기 (기존 JSON 파일 의존성 제거)
-        pipeline = get_pipeline()
-        result_text = test_result.summary_text  # DB에서 직접 가져오기
+        # 완료된 결과 반환
+        # NULL 체크 - 분석 실패한 경우
+        if test_result.persona_type is None:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "test_id": test_id,
+                    "status": "failed",
+                    "message": "분석에 실패했습니다.",
+                    "error": test_result.summary_text,
+                    "result": None
+                }
+            )
         
-        # 성격 유형 매핑 (persona_type ID -> 이름)
-        personality_mapping = {
-            1: "추진형",  # 추진이
-            2: "내면형",  # 내면이  
-            3: "관계형",  # 관계이
-            4: "쾌락형",  # 쾌락이
-            5: "안정형"   # 안정이
-        }
-        
-        # DB에서 확률 데이터 추출
+        # 정상 결과 반환
         probabilities = {
             "추진형": float(test_result.dog_scores or 0.0),
             "내면형": float(test_result.cat_scores or 0.0),
@@ -676,38 +556,32 @@ async def get_analysis_status(
             "안정형": float(test_result.turtle_scores or 0.0)
         }
         
-        # 최고 확률 유형 찾기
-        if probabilities and any(v > 0 for v in probabilities.values()):
+        # 예측된 성격 유형 결정
+        if probabilities and any(probabilities.values()):
             predicted_personality = max(probabilities.items(), key=lambda x: x[1])[0]
-            analysis_method = "keyword_classifier"
+        elif test_result.persona_type in PERSONALITY_REVERSE_MAPPING:
+            predicted_personality = PERSONALITY_REVERSE_MAPPING[test_result.persona_type]
         else:
-            # 확률 데이터가 없는 경우 persona_type에서 가져오기
-            predicted_personality = personality_mapping.get(test_result.persona_type, "내면형")
-            analysis_method = "fallback"
+            # 이 경우는 발생하면 안 됨 (데이터 무결성 문제)
+            logger.error(f"Invalid persona_type in DB: {test_result.persona_type}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "test_id": test_id,
+                    "status": "error",
+                    "message": "데이터 무결성 오류",
+                    "error": "유효하지 않은 성격 유형 ID"
+                }
+            )
         
-        # 키워드 정보 (기본값 제공)
-        keyword_info = {
-            "current_keywords": [],
-            "previous_keywords": [],  
-            "total_keywords": 0,
-            "confidence": max(probabilities.values()) / 100.0 if probabilities else 0.0
-        }
-        
-        print(f"📊 API 응답 데이터 준비:")
-        print(f"  - predicted_personality: {predicted_personality}")
-        print(f"  - probabilities: {probabilities}")
-        print(f"  - persona_type: {test_result.persona_type}")
-        print(f"  - analysis_method: {analysis_method}")
-
-        # 분석 완료
         return JSONResponse(content={
             "test_id": test_id,
             "status": "completed",
             "message": "분석이 완료되었습니다.",
             "steps": [
-                {"name": "객체 탐지", "description": "YOLO를 사용한 그림 요소 검출", "completed": True, "current": False},
-                {"name": "심리 분석", "description": "GPT-4를 사용한 심리상태 분석", "completed": True, "current": False},
-                {"name": "성격 분류", "description": "키워드 분류기를 사용한 성격유형 분류", "completed": True, "current": False}
+                {"name": "객체 탐지", "completed": True, "current": False},
+                {"name": "심리 분석", "completed": True, "current": False},
+                {"name": "성격 분류", "completed": True, "current": False}
             ],
             "current_step": 3,
             "completed_steps": 3,
@@ -715,120 +589,73 @@ async def get_analysis_status(
             "result": {
                 "persona_type": test_result.persona_type,
                 "summary_text": test_result.summary_text,
-                "result_text": result_text,
                 "predicted_personality": predicted_personality,
                 "probabilities": probabilities,
-                "analysis_method": analysis_method,
-                "keyword_analysis": keyword_info,
                 "created_at": test_result.created_at.isoformat() if test_result.created_at else None,
-                "image_url": drawing_test.image_url  # 이미지 URL 추가
+                "image_url": drawing_test.image_url
             }
         })
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"분석 상태 조회 중 오류가 발생했습니다: {str(e)}"
-        )
-
+        logger.error(f"상태 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail="분석 상태 조회 중 오류가 발생했습니다.")
 
 @router.get("/pipeline-health")
 async def check_pipeline_health():
-    """
-    파이프라인 상태 확인 API
+    """파이프라인 상태 확인 API"""
     
-    시스템 관리자가 파이프라인 구성 요소의 상태를 확인할 때 사용합니다.
+    status = {
+        "pipeline_status": "unknown",
+        "timestamp": datetime.now().isoformat(),
+        "components": {
+            "pipeline_import": PIPELINE_AVAILABLE,
+            "yolo_model": False,
+            "openai_api": False,
+            "kobert_model": False,
+            "directories": False
+        },
+        "directories": {},
+        "error_details": None
+    }
     
-    Returns:
-        JSON: 파이프라인 상태 정보
-    """
-    try:
-        # 기본 상태 정보
-        status = {
-            "pipeline_status": "unknown",
-            "timestamp": datetime.now().isoformat(),
-            "components": {
-                "pipeline_import": False,
-                "yolo_model": False,
-                "openai_api": False,
-                "kobert_model": False,
-                "directories": False
-            },
-            "directories": {},
-            "error_details": None
-        }
-        
-        # 파이프라인 import 확인
-        if HTPAnalysisPipeline is not None:
-            status["components"]["pipeline_import"] = True
+    if PIPELINE_AVAILABLE:
+        try:
+            pipeline = pipeline_manager.get_pipeline()
             
-            try:
-                pipeline = get_pipeline()
-                
-                status["directories"] = {
-                    "test_images": str(pipeline.config.test_img_dir),
-                    "detection_results": str(pipeline.config.detection_results_dir),
-                    "rag_docs": str(pipeline.config.rag_dir)
-                }
-                
-                # YOLO 모델 확인
-                yolo_path = pipeline.config.model_dir / pipeline.config.yolo_model_path
-                status["components"]["yolo_model"] = yolo_path.exists()
-                
-                # OpenAI API 키 확인
-                status["components"]["openai_api"] = bool(os.getenv('OPENAI_API_KEY'))
-                
-                # KoBERT 모델 확인
-                kobert_path = pipeline.config.model_dir / pipeline.config.kobert_model_path
-                status["components"]["kobert_model"] = kobert_path.exists()
-                
-                # 디렉토리 확인
-                required_dirs = [
-                    pipeline.config.test_img_dir,
-                    pipeline.config.detection_results_dir,
-                    pipeline.config.rag_dir
-                ]
-                status["components"]["directories"] = all(d.exists() for d in required_dirs)
-                
-            except Exception as pipeline_error:
-                status["error_details"] = f"Pipeline initialization failed: {str(pipeline_error)}"
-        else:
-            if PIPELINE_IMPORT_ERROR and "numpy.dtype size changed" in PIPELINE_IMPORT_ERROR:
-                status["error_details"] = {
-                    "message": "numpy/pandas 버전 호환성 문제",
-                    "error": PIPELINE_IMPORT_ERROR,
-                    "solution": "conda install -c conda-forge numpy pandas --force-reinstall",
-                    "alternative": "pip uninstall numpy pandas -y && pip install numpy pandas",
-                    "help": "numpy와 pandas의 버전이 호환되지 않습니다. 재설치가 필요합니다."
-                }
-            else:
-                missing_packages = ["pandas", "transformers", "ultralytics", "torch", "opencv-python", "scikit-learn"]
-                status["error_details"] = {
-                    "message": "HTPAnalysisPipeline could not be imported",
-                    "error": PIPELINE_IMPORT_ERROR or "Unknown import error",
-                    "missing_packages": missing_packages,
-                    "install_command": f"pip install {' '.join(missing_packages)}",
-                    "help": "HTP 분석 기능을 사용하려면 위 패키지들을 설치해주세요."
-                }
-        
-        # 전체 상태 판단
-        if status["components"]["pipeline_import"]:
+            # 디렉토리 정보
+            status["directories"] = {
+                "test_images": str(pipeline.config.test_img_dir),
+                "detection_results": str(pipeline.config.detection_results_dir),
+                "rag_docs": str(pipeline.config.rag_dir)
+            }
+            
+            # 컴포넌트 상태 확인
+            yolo_path = pipeline.config.model_dir / pipeline.config.yolo_model_path
+            status["components"]["yolo_model"] = yolo_path.exists()
+            
+            status["components"]["openai_api"] = bool(os.getenv('OPENAI_API_KEY'))
+            
+            kobert_path = pipeline.config.model_dir / pipeline.config.kobert_model_path
+            status["components"]["kobert_model"] = kobert_path.exists()
+            
+            required_dirs = [
+                pipeline.config.test_img_dir,
+                pipeline.config.detection_results_dir,
+                pipeline.config.rag_dir
+            ]
+            status["components"]["directories"] = all(d.exists() for d in required_dirs)
+            
+            # 전체 상태 판단
             all_healthy = all(status["components"].values())
             status["pipeline_status"] = "healthy" if all_healthy else "degraded"
-        else:
-            status["pipeline_status"] = "unavailable"
-        
-        return JSONResponse(content=status)
-        
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "pipeline_status": "error",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat(),
-                "error_details": "Health check failed completely"
-            }
-        )
+            
+        except Exception as e:
+            status["pipeline_status"] = "error"
+            status["error_details"] = str(e)
+    else:
+        status["pipeline_status"] = "unavailable"
+        status["error_details"] = "파이프라인 모듈을 로드할 수 없습니다."
+    
+    return JSONResponse(content=status)

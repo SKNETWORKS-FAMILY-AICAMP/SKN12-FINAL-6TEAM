@@ -523,7 +523,8 @@ async def upload_profile_image(
     
     try:
         # 업로드 디렉토리 생성
-        upload_dir = Path("uploads/profile_images")
+        project_parent_dir = Path(__file__).resolve().parent[4]
+        upload_dir = project_parent_dir / "uploads" / "profile_images"
         upload_dir.mkdir(parents=True, exist_ok=True)
         
         # 파일 확장자 추출
