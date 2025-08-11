@@ -66,7 +66,7 @@ PERSONALITY_MAPPING = {pt.korean_name: pt.id for pt in PersonalityType}
 PERSONALITY_REVERSE_MAPPING = {pt.id: pt.korean_name for pt in PersonalityType}
 SCORE_FIELD_MAPPING = {pt.korean_name: pt.score_field for pt in PersonalityType}
 
-ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif'}
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 IMAGE_QUALITY = 95
 
@@ -177,15 +177,19 @@ async def validate_and_process_image(
     # 고유 ID 생성
     unique_id = str(uuid.uuid4())
     
-    # 저장 경로 설정
-    current_file = Path(__file__).resolve()  # 절대 경로로 변환
-    desktop_path = current_file.parents[5] # Desktop 경로
-    upload_dir = desktop_path / "result" / "images"
+    # Docker 환경 확인 및 저장 경로 설정
+    if Path("/.dockerenv").exists() or os.environ.get("DOCKER_CONTAINER"):
+        # Docker 환경
+        upload_dir = Path("/app/result/images")
+    else:
+        # 로컬 환경
+        upload_dir = Path.home() / "result" / "images"
+    
     upload_dir.mkdir(parents=True, exist_ok=True)
     save_path = upload_dir / f"{unique_id}.jpg"
+    logger.info(f"이미지 저장 경로: {save_path}")
     
     return unique_id, save_path, pil_image
-
 def save_images(
     pil_image: PILImage.Image,
     save_path: Path,

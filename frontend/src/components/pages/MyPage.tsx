@@ -544,9 +544,9 @@ const MyPage: React.FC<MyPageProps> = ({
     }
 
     // 파일 형식 검증
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
     if (!allowedTypes.includes(file.type)) {
-      return 'JPG, PNG, GIF 형식의 이미지 파일만 업로드 가능합니다.';
+      return 'JPG, PNG 형식의 이미지 파일만 업로드 가능합니다.';
     }
 
     return null;

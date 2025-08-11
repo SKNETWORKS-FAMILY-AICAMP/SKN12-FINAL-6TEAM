@@ -8,7 +8,6 @@ from typing import List
 import os
 import uuid
 from pathlib import Path
-
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, UserListResponse,
     PasswordChange, SocialLoginResponse
@@ -515,16 +514,22 @@ async def upload_profile_image(
     
     # 파일 크기 제한 (5MB)
     max_size = 5 * 1024 * 1024
-    if file.size and file.size > max_size:
+    contents = await file.read()
+    if len(contents) > max_size:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="이미지 파일은 5MB 이하여야 합니다."
         )
     
     try:
-        # 업로드 디렉토리 생성
-        project_parent_dir = Path(__file__).resolve().parent[4]
-        upload_dir = project_parent_dir / "uploads" / "profile_images"
+        # Docker 환경 확인 및 업로드 디렉토리 설정
+        if Path("/.dockerenv").exists() or os.environ.get("DOCKER_CONTAINER"):
+            # Docker 환경
+            upload_dir = Path("/app/uploads/profile_images")
+        else:
+            # 로컬 환경
+            upload_dir = Path.home() / "uploads" / "profile_images"
+        
         upload_dir.mkdir(parents=True, exist_ok=True)
         
         # 파일 확장자 추출
@@ -535,7 +540,6 @@ async def upload_profile_image(
         file_path = upload_dir / unique_filename
         
         # 파일 저장
-        contents = await file.read()
         with open(file_path, "wb") as f:
             f.write(contents)
         
@@ -544,12 +548,13 @@ async def upload_profile_image(
         
         # 기존 이미지 파일 삭제
         if user_info.profile_image_url:
-            old_file_path = Path(f".{user_info.profile_image_url}")
-            if old_file_path.exists():
-                try:
+            try:
+                old_filename = user_info.profile_image_url.split('/')[-1]
+                old_file_path = upload_dir / old_filename
+                if old_file_path.exists():
                     old_file_path.unlink()
-                except Exception:
-                    pass
+            except Exception:
+                pass
         
         user_info.profile_image_url = image_url
         db.commit()
