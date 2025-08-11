@@ -177,15 +177,19 @@ async def validate_and_process_image(
     # 고유 ID 생성
     unique_id = str(uuid.uuid4())
     
-    # 저장 경로 설정
-    current_file = Path(__file__).resolve()  # 절대 경로로 변환
-    desktop_path = current_file.parents[5] # Desktop 경로
-    upload_dir = desktop_path / "tmp" /"result" / "images"
+    # Docker 환경 확인 및 저장 경로 설정
+    if Path("/.dockerenv").exists() or os.environ.get("DOCKER_CONTAINER"):
+        # Docker 환경
+        upload_dir = Path("/app/result/images")
+    else:
+        # 로컬 환경
+        upload_dir = Path.home() / "result" / "images"
+    
     upload_dir.mkdir(parents=True, exist_ok=True)
     save_path = upload_dir / f"{unique_id}.jpg"
+    logger.info(f"이미지 저장 경로: {save_path}")
     
     return unique_id, save_path, pil_image
-
 def save_images(
     pil_image: PILImage.Image,
     save_path: Path,
