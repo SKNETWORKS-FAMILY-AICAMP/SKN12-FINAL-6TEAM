@@ -30,7 +30,9 @@ jobs:
           key: ${{ secrets.EC2_PRIVATE_KEY }}
           script: |
             cd SKN12-FINAL-6TEAM/
-            git pull
+            git fetch --all
+            git checkout docker
+            git pull origin docker
             docker compose down
             docker compose build --no-cache
             docker compose up -d
