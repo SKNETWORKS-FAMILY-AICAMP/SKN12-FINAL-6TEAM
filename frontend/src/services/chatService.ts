@@ -95,35 +95,35 @@ export class ChatService {
     let timestamp = '';
     try {
       if (message.created_at) {
-        // 디버깅: 서버에서 받은 시간 로그
-        console.log('Server timestamp:', message.created_at, 'Type:', typeof message.created_at);
-        
-        // 서버에서 서울 시간대로 저장된 시간을 올바르게 처리
+        // 서버에서 받은 UTC 시간을 한국 시간대로 변환
         let date: Date;
         
-        // ISO 형식 문자열인지 확인
+        // 서버에서 UTC 시간으로 받은 데이터를 처리
         if (typeof message.created_at === 'string') {
-          // 서버에서 timezone 정보 없이 보낸 경우, 서울 시간대로 간주
-          if (!message.created_at.includes('T')) {
-            // "YYYY-MM-DD HH:mm:ss" 형식인 경우
-            date = new Date(message.created_at.replace(' ', 'T'));
-          } else {
-            date = new Date(message.created_at);
+          let dateString = message.created_at;
+          
+          // "YYYY-MM-DD HH:mm:ss" 형식인 경우 ISO 형식으로 변환
+          if (!dateString.includes('T')) {
+            dateString = dateString.replace(' ', 'T');
           }
           
-          // 서버가 서울 시간으로 저장했으므로, 현재 브라우저가 서울 시간대가 아닐 경우 보정
-          // 하지만 일단은 그대로 사용하되 로컬 시간대로 표시
+          // UTC 타임존 명시적 추가 (서버가 실제로는 UTC로 보내고 있음)
+          if (!dateString.endsWith('Z') && !dateString.includes('+') && !dateString.includes('-')) {
+            dateString += 'Z';
+          }
+          
+          date = new Date(dateString);
         } else {
           date = new Date(message.created_at);
         }
         
         if (!isNaN(date.getTime())) {
-          // 사용자의 로컬 시간대로 표시
+          // 한국 시간대로 표시 (UTC → KST 자동 변환)
           timestamp = date.toLocaleTimeString("ko-KR", {
             hour: "numeric",
             minute: "2-digit",
             hour12: true,
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            timeZone: "Asia/Seoul"
           });
         } else {
           // created_at이 유효하지 않으면 현재 시간 사용
