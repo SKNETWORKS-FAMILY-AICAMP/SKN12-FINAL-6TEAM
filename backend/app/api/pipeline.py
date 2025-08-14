@@ -340,7 +340,7 @@ async def analyze_drawing_image(
         web_path = web_dir / f"{unique_id}.jpg"
         
         # 5. 파이프라인용 디렉토리 (기존 호환성 유지)
-        pipeline = get_pipeline()
+        pipeline = pipeline_manager.get_pipeline()
         pipeline_upload_dir = pipeline.config.test_img_dir
         pipeline_upload_dir.mkdir(parents=True, exist_ok=True)
         pipeline_image_path = pipeline_upload_dir / f"{unique_id}.jpg"
