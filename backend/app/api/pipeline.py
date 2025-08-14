@@ -273,32 +273,125 @@ async def analyze_drawing_image(
     start_time = time.time()
     upload_file = file or image
     
-    if not upload_file:
-        raise HTTPException(
-            status_code=422,
-            detail="이미지 파일이 업로드되지 않았습니다."
-        )
+    print(f"🔍 API 엔드포인트 진입 - 함수 시작")
+    print(f"📋 요청 파라미터 정보:")
+    print(f"  - file: {file}")
+    print(f"  - image: {image}")
+    print(f"  - upload_file: {upload_file}")
+    print(f"  - filename: {getattr(upload_file, 'filename', 'N/A') if upload_file else 'N/A'}")
+    print(f"  - content_type: {getattr(upload_file, 'content_type', 'N/A') if upload_file else 'N/A'}")
+    print(f"  - description: {description}")
+    print(f"  - current_user: {current_user}")
     
     try:
-        # 이미지 검증 및 처리
-        unique_id, save_path, pil_image = await validate_and_process_image(upload_file)
+        if not upload_file:
+            print(f"❌ 검증 실패: 파일이 업로드되지 않음")
+            raise HTTPException(
+                status_code=422,
+                detail="이미지 파일이 업로드되지 않았습니다. 'file' 또는 'image' 필드에 파일을 첨부해주세요."
+            )
         
-        # 파이프라인 경로 설정
-        pipeline_path = None
-        if PIPELINE_AVAILABLE:
-            try:
-                pipeline = pipeline_manager.get_pipeline()
-                pipeline_path = pipeline.config.test_img_dir / f"{unique_id}.jpg"
-            except Exception as e:
-                logger.warning(f"파이프라인 경로 설정 실패: {e}")
+        print(f"🚀 이미지 분석 요청 시작 - 사용자: {current_user['user_id']}")
+        print(f"📁 이미지 파일: {upload_file.filename}, 크기: {upload_file.size if upload_file.size else 'unknown'}, 타입: {upload_file.content_type}")
+        print(f"📝 설명: {description}")
         
-        # 이미지 저장
-        save_images(pil_image, save_path, pipeline_path)
+        if not upload_file.filename:
+            print(f"❌ 검증 실패: 파일명이 없음")
+            raise HTTPException(
+                status_code=422,
+                detail="이미지 파일명이 없습니다."
+            )
         
-        # DB 레코드 생성
+        # 1. 파일 검증
+        if not upload_file.content_type or not upload_file.content_type.startswith('image/'):
+            print(f"❌ 검증 실패: 잘못된 content-type: {upload_file.content_type}")
+            raise HTTPException(
+                status_code=422,
+                detail="지원하지 않는 파일 형식입니다. 이미지 파일을 업로드해주세요."
+            )
+        
+        # 2. 고유 파일명 생성
+        file_extension = Path(upload_file.filename).suffix.lower()
+        if file_extension not in ['.jpg', '.jpeg', '.png', '.bmp', '.gif']:
+            print(f"❌ 검증 실패: 지원하지 않는 확장자: {file_extension}")
+            raise HTTPException(
+                status_code=422,
+                detail="지원하지 않는 이미지 형식입니다. (.jpg, .jpeg, .png, .bmp, .gif 지원)"
+            )
+        
+        unique_id = str(uuid.uuid4())
+        image_filename = f"{unique_id}{file_extension}"
+        
+        # 3. 다중 해상도 이미지 디렉토리 설정
+        backend_root = Path(__file__).parent.parent.parent
+        base_dir = backend_root / "result" / "images"
+        
+        # 다중 해상도별 디렉토리 생성
+        original_dir = base_dir / "original"    # 원본 (사용자 조회용)
+        yolo_dir = base_dir / "yolo"           # YOLO 분석용 (320x320, q=10)
+        web_dir = base_dir / "web"             # 웹 표시용 (640x640, q=85)
+        
+        for dir_path in [original_dir, yolo_dir, web_dir]:
+            dir_path.mkdir(parents=True, exist_ok=True)
+        
+        # 4. 파일 경로 설정 (JPG로 통일)
+        original_path = original_dir / f"{unique_id}.jpg"
+        yolo_path = yolo_dir / f"{unique_id}.jpg"
+        web_path = web_dir / f"{unique_id}.jpg"
+        
+        # 5. 파이프라인용 디렉토리 (기존 호환성 유지)
+        pipeline = get_pipeline()
+        pipeline_upload_dir = pipeline.config.test_img_dir
+        pipeline_upload_dir.mkdir(parents=True, exist_ok=True)
+        pipeline_image_path = pipeline_upload_dir / f"{unique_id}.jpg"
+        
+        # 이미지를 JPG 형식으로 변환하여 저장
+        import PIL.Image as PILImage
+        from PIL import ImageOps
+        import io
+        
+        # 업로드된 파일을 PIL Image로 로드
+        image_data = await upload_file.read()
+        pil_image = PILImage.open(io.BytesIO(image_data))
+        
+        # EXIF 회전 정보 자동 적용 (스마트폰 사진 회전 문제 해결)
+        try:
+            pil_image = ImageOps.exif_transpose(pil_image)
+            print(f"✅ EXIF 회전 정보 적용 완료")
+        except Exception as e:
+            print(f"⚠️ EXIF 회전 정보 적용 실패 (무시 가능): {e}")
+        
+        # RGB 모드로 변환 (RGBA 등 다른 모드 처리)
+        if pil_image.mode != 'RGB':
+            pil_image = pil_image.convert('RGB')
+        
+        # 다중 해상도 이미지 저장
+        print(f"📸 다중 해상도 이미지 저장 시작...")
+        
+        # 1. 원본 저장 (사용자 조회용, 고품질)
+        pil_image.save(original_path, 'JPEG', quality=95, optimize=True)
+        print(f"✅ 원본 저장 완료: {original_path}")
+        
+        # 2. YOLO용 압축 (320x320, quality=10)
+        yolo_image = pil_image.copy()
+        yolo_image.thumbnail((320, 320), PILImage.Resampling.LANCZOS)
+        yolo_image.save(yolo_path, 'JPEG', quality=10, optimize=True)
+        print(f"✅ YOLO용 압축 완료: {yolo_path} (320x320, q=10)")
+        
+        # 3. 웹용 중간 품질 (640x640, quality=85)
+        web_image = pil_image.copy()
+        web_image.thumbnail((640, 640), PILImage.Resampling.LANCZOS)
+        web_image.save(web_path, 'JPEG', quality=85, optimize=True)
+        print(f"✅ 웹용 이미지 완료: {web_path} (640x640, q=85)")
+        
+        # 4. 파이프라인용 디렉토리에 YOLO 압축본 저장 (기존 호환성)
+        yolo_image.save(pipeline_image_path, 'JPEG', quality=10, optimize=True)
+        print(f"✅ 파이프라인 호환성 저장 완료: {pipeline_image_path}")
+        
+        # 6. 데이터베이스에 테스트 레코드 생성 (원본 이미지 경로 저장)
         drawing_test = DrawingTest(
             user_id=current_user["user_id"],
-            image_url=f"result/images/{unique_id}.jpg",
+            image_url=f"result/images/original/{unique_id}.jpg",  # 원본 이미지 경로
             submitted_at=datetime.now()
         )
         
@@ -489,43 +582,73 @@ async def get_analysis_status(
             # 진행 중 상태 반환
             progress = AnalysisProgress()
             
-            # 파이프라인 상태 확인 (가능한 경우)
-            if PIPELINE_AVAILABLE and drawing_test.image_url:
-                try:
-                    import re
-                    match = re.search(r'result/images/(.+?)\.jpg', drawing_test.image_url)
-                    if match:
-                        unique_id = match.group(1)
-                        pipeline = pipeline_manager.get_pipeline()
-                        status_info = pipeline.get_analysis_status(unique_id)
-                        
-                        progress.detection_completed = status_info.get("detection_completed", False)
-                        progress.analysis_completed = status_info.get("analysis_completed", False)
-                        progress.classification_completed = status_info.get("classification_completed", False)
-                except Exception as e:
-                    logger.warning(f"파이프라인 상태 확인 실패: {e}")
+            # 이미지 파일명 추출 (URL에서 파일명 부분만)
+            image_url = drawing_test.image_url  # "result/images/original/{unique_id}.jpg"
+            if image_url:
+                # "result/images/original/uuid.jpg" -> "uuid"
+                import re
+                match = re.search(r'result/images/original/(.+?)\.jpg', image_url)
+                if match:
+                    unique_id = match.group(1)
+                    status_info = pipeline.get_analysis_status(unique_id)
+                    
+                    # 단계별 진행상황 구성
+                    detection_completed = status_info.get("detection_completed", False)
+                    analysis_completed = status_info.get("analysis_completed", False)
+                    classification_completed = status_info.get("classification_completed", False)
+                    
+                    steps = [
+                        {
+                            "name": "객체 탐지",
+                            "description": "YOLO를 사용한 그림 요소 검출",
+                            "completed": detection_completed,
+                            "current": not detection_completed
+                        },
+                        {
+                            "name": "심리 분석", 
+                            "description": "GPT-4를 사용한 심리상태 분석",
+                            "completed": analysis_completed,
+                            "current": detection_completed and not analysis_completed
+                        },
+                        {
+                            "name": "성격 분류",
+                            "description": "키워드 분류기를 사용한 성격유형 분류", 
+                            "completed": classification_completed,
+                            "current": analysis_completed and not classification_completed
+                        }
+                    ]
+                    
+                    # 현재 진행 중인 단계 찾기
+                    current_step = next((i+1 for i, step in enumerate(steps) if step["current"]), 1)
+                    completed_steps = sum(1 for step in steps if step["completed"])
+                    
+                    # 모든 단계가 완료되었는지 확인
+                    if classification_completed:
+                        # 3단계 모두 완료된 경우, 최종 결과가 DB에 저장될 때까지 잠시 대기
+                        print(f"🎯 모든 단계 완료됨 - 최종 결과 대기 중")
+                        return JSONResponse(content={
+                            "test_id": test_id,
+                            "status": "processing",
+                            "message": "최종 결과 생성 중...",
+                            "steps": steps,
+                            "current_step": 3,
+                            "completed_steps": 3,
+                            "total_steps": 3,
+                            "estimated_remaining": "잠시만 기다려주세요"
+                        })
+                    
+                    return JSONResponse(content={
+                        "test_id": test_id,
+                        "status": "processing",
+                        "message": f"단계 {current_step}/3 진행 중...",
+                        "steps": steps,
+                        "current_step": current_step,
+                        "completed_steps": completed_steps,
+                        "total_steps": 3,
+                        "estimated_remaining": f"{4-completed_steps}분 소요 예상"
+                    })
             
-            steps = [
-                {
-                    "name": "객체 탐지",
-                    "description": "YOLO를 사용한 그림 요소 검출",
-                    "completed": progress.detection_completed,
-                    "current": progress.current_step == 1
-                },
-                {
-                    "name": "심리 분석",
-                    "description": "GPT-4o를 사용한 심리상태 분석",
-                    "completed": progress.analysis_completed,
-                    "current": progress.current_step == 2
-                },
-                {
-                    "name": "성격 분류",
-                    "description": "키워드 기반 성격유형 분류",
-                    "completed": progress.classification_completed,
-                    "current": progress.current_step == 3
-                }
-            ]
-            
+            # 기본 응답 (파일명 추출 실패 시)
             return JSONResponse(content={
                 "test_id": test_id,
                 "status": "processing",

@@ -237,9 +237,12 @@ async def send_message(
             ChatMessage.session_id == session_id
         ).order_by(ChatMessage.created_at.desc()).limit(2).all()
         
-        # 가장 최근의 사용자 메시지와 AI 응답 메시지
-        assistant_message = recent_messages[0]  # 가장 최근 (AI 응답)
-        user_message = recent_messages[1]  # 그 다음 최근 (사용자 메시지)
+        # 시간순으로 정렬하여 사용자 메시지가 먼저, AI 응답이 나중에 오도록 수정
+        recent_messages.sort(key=lambda x: x.created_at)
+        
+        # 이제 순서가 올바름: 사용자 메시지 -> AI 응답
+        user_message = recent_messages[0]  # 먼저 생성된 사용자 메시지
+        assistant_message = recent_messages[1]  # 나중에 생성된 AI 응답
         
         return SendMessageResponse(
             user_message=ChatMessageResponse(
@@ -391,6 +394,27 @@ async def get_personalized_greeting(
                 print(f"[개인화 인사] AI 서비스로 개인화된 인사 생성 요청")
                 greeting = ai_service._generate_personalized_greeting(persona_type, user_analysis_result, user_nickname)
                 print(f"[개인화 인사] 생성된 인사: {greeting}")
+                
+                # 🆕 개인화된 인사를 채팅 메시지로 저장 (사이드바 히스토리에 표시되도록)
+                if greeting and greeting.strip():
+                    # 해당 세션에 assistant 메시지가 있는지 확인 (더 간단한 중복 방지)
+                    existing_messages = db.query(ChatMessage).filter(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.sender_type == "assistant"
+                    ).count()
+                    
+                    if existing_messages == 0:
+                        # 첫 번째 assistant 메시지가 없는 경우에만 개인화된 인사 저장
+                        greeting_message = ChatMessage(
+                            session_id=session_id,
+                            sender_type="assistant",
+                            content=greeting
+                        )
+                        db.add(greeting_message)
+                        db.commit()
+                        print(f"[개인화 인사] 채팅 메시지로 저장 완료: {greeting}")
+                    else:
+                        print(f"[개인화 인사] 이미 assistant 메시지가 존재함 ({existing_messages}개), 저장 생략")
             else:
                 print(f"[개인화 인사] 그림 분석 결과 없음 - 빈 인사 반환")
                 greeting = ""  # 그림 분석 결과가 없으면 빈 문자열

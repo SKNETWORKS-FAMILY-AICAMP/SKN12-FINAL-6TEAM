@@ -266,16 +266,43 @@ def analyze_image_with_gpt(image_path, prompt, rag_context=None, max_retries=5):
             else:
                 enhanced_prompt = prompt
 
-            # 🚀 이미지 압축 최적화 적용
-            img_base64, compression_info = optimize_image_for_gpt(image_path, max_size=(1024, 1024), quality=85)
+            # 🚀 이미지 최적화: 이미 YOLO에서 320x320으로 압축된 이미지인지 확인
+            try:
+                import os
+                from PIL import Image
+                
+                # 파일 크기와 이미지 크기 확인
+                file_size = os.path.getsize(image_path)
+                with Image.open(image_path) as img:
+                    img_size = img.size
+                
+                # 이미 작은 이미지(YOLO 처리된)이면 추가 압축 없이 사용
+                if img_size[0] <= 320 and img_size[1] <= 320 and file_size < 50000:  # 50KB 미만
+                    print(f"📸 이미 최적화된 이미지 감지: {img_size}, {file_size:,} bytes - 추가 압축 생략")
+                    with open(image_path, 'rb') as f:
+                        img_base64 = base64.b64encode(f.read()).decode('utf-8')
+                    compression_info = {
+                        'original_file_size': file_size,
+                        'compressed_size': file_size,
+                        'compression_ratio': 0,
+                        'original_dimensions': img_size,
+                        'compressed_dimensions': img_size
+                    }
+                else:
+                    print(f"📸 큰 이미지 감지: {img_size}, {file_size:,} bytes - GPT용 압축 적용")
+                    img_base64, compression_info = optimize_image_for_gpt(image_path, max_size=(1024, 1024), quality=85)
+                    
+            except Exception as e:
+                print(f"⚠️ 이미지 크기 확인 실패, 기본 압축 적용: {e}")
+                img_base64, compression_info = optimize_image_for_gpt(image_path, max_size=(1024, 1024), quality=85)
             
             # 압축 결과 로그
-            print(f"이미지 파일 크기: {compression_info['original_file_size']} bytes")
+            print(f"이미지 파일 크기: {compression_info['original_file_size']:,} bytes")
             if 'error' not in compression_info:
-                print(f"압축 후 크기: {compression_info['compressed_size']} bytes")
+                print(f"처리 후 크기: {compression_info['compressed_size']:,} bytes")
                 print(f"압축률: {compression_info['compression_ratio']}%")
                 print(f"원본 크기: {compression_info['original_dimensions']}")
-                print(f"압축 후 크기: {compression_info['compressed_dimensions']}")
+                print(f"처리 후 크기: {compression_info['compressed_dimensions']}")
             
             data_url = f"data:image/jpeg;base64,{img_base64}"
             print(f"MIME 타입: image/jpeg")

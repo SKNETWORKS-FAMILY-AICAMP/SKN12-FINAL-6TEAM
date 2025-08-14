@@ -10,6 +10,7 @@ import type { SearchResult } from "../../types"
 import { useChatSession } from "../../hooks/useChatSession"
 import { authService } from "../../services/authService"
 import { testService } from "../../services/testService"
+import { chatService } from "../../services/chatService"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { ChevronLeft, ChevronRight } from 'lucide-react'
@@ -32,7 +33,7 @@ const getPersonaBaseGreeting = (personaName: string) => {
   const baseGreetings: { [key: string]: string } = {
     "내면이": "안녕... 나는 내면이야.. 너에게 뭔가 말하고 싶은 게 있어... 조금만 기다려줄래..?",
     "추진이": "반갑다 나는 추진이다. 당신의 나약함, 오늘 여기서 끝낸다.",
-    "관계이": "안녕! 나는 관계이야! 아, 잠깐만! 너에게 하고 싶은 말이 있어!",
+    "햇살이": "안녕! 저는 햇살이예요! 아, 잠깐만! 당신에게 해주고 싶은 말이 있어요 ☺️",
     "안정이": "안녕? 나는 안정이야! 음... 잠시만, 차근차근 생각해볼게!",
     "쾌락이": "하하 나는 쾌락이야! 5초만 기다려! 하나..둘..다섯!"
   };
@@ -41,12 +42,12 @@ const getPersonaBaseGreeting = (personaName: string) => {
 };
 
 // 캐릭터별 떠오르는 애니메이션 스타일 결정 함수
-const getFloatAnimationStyle = (personaId: number | null): React.CSSProperties => {
+const getFloatAnimationStyle = (personaId: number | null | undefined): React.CSSProperties => {
   const getDelay = () => {
     switch (personaId) {
       case 1: return '-0.6s'; // 추진이
       case 2: return '-1.2s'; // 내면이
-      case 3: return '-1.8s'; // 관계이
+      case 3: return '-1.8s'; // 햇살이
       case 4: return '-2.4s'; // 쾌락이
       case 5: return '0s';    // 안정이
       default: return '0s';
@@ -68,8 +69,12 @@ const TalkingAnimation: React.FC<{ className?: string; personaId?: number }> = (
         return "/assets/추진이 gif.gif";
       case 2: // 내면이
         return "/assets/persona/내면이 gif.gif";
-      case 3: // 관계이
-        return "/assets/관계이 gif.gif";
+      case 3: // 햇살이
+        return "/assets/햇살이 gif.gif";
+      case 4: // 쾌락이
+        return "/assets/쾌락이 gif.gif";
+      case 5: // 안정이
+        return "/assets/안정이 gif.gif";
       default:
         // 다른 캐릭터들은 기본 애니메이션 사용
         return null;
@@ -80,13 +85,15 @@ const TalkingAnimation: React.FC<{ className?: string; personaId?: number }> = (
   const getGifSize = (personaId: number | undefined) => {
     switch (personaId) {
       case 4: // 쾌락이
-        return "w-[450px] h-[450px]";
+        return "w-[1450px] h-[1450px]";
       case 2: // 내면이
         return "w-[480px] h-[480px]";
-      case 3: // 관계이
-        return "w-[800px] h-[800px]"; 
+      case 3: // 햇살이
+        return "w-[1500px] h-[1500px]"; 
       case 1: // 추진이
-        return "w-[796px] h-[796px]";
+        return "w-[950px] h-[950px]";
+      case 5: // 안정이
+        return "w-[1550px] h-[1550px]";
       default:
         return "w-95 h-95";
     }
@@ -157,9 +164,27 @@ const [imageLoaded, setImageLoaded] = useState(false)
 
 // location.state에서 캐릭터 정보 가져오기 (ResultDetailPage에서 전달된 정보)
 const stateSelectedCharacter = location.state?.selectedCharacter as SearchResult | undefined
+const forceNewSession = location.state?.forceNewSession as boolean | undefined
 
-// 최종 선택된 캐릭터 결정 (state > props 순서로 우선순위)
-const selectedCharacter = stateSelectedCharacter || propSelectedCharacter
+// sessionStorage에서 새로운 캐릭터 세션 정보 가져오기
+const [sessionStorageCharacter, setSessionStorageCharacter] = useState<SearchResult | null>(null)
+
+useEffect(() => {
+  const newCharacterSession = sessionStorage.getItem('newCharacterSession')
+  if (newCharacterSession) {
+    try {
+      const characterData = JSON.parse(newCharacterSession)
+      setSessionStorageCharacter(characterData)
+      sessionStorage.removeItem('newCharacterSession') // 사용 후 삭제
+      console.log('SessionStorage에서 캐릭터 정보 복원:', characterData)
+    } catch (error) {
+      console.error('SessionStorage 캐릭터 정보 파싱 오류:', error)
+    }
+  }
+}, [])
+
+// 최종 선택된 캐릭터 결정 (sessionStorage > state > props 순서로 우선순위)
+const selectedCharacter = sessionStorageCharacter || stateSelectedCharacter || propSelectedCharacter
 
 console.log('ChatPage - 캐릭터 정보:', {
   stateSelectedCharacter,
@@ -172,8 +197,27 @@ const toggleChatPanel = () => {
     setShowChatPanel(false)
     setTimeout(() => setIsVisible(false), 500) // 닫힘 애니메이션 후 DOM 제거
   } else {
+    // 사이드탭을 열기 전에 현재 스크롤 위치 저장
+    const currentScrollTop = window.scrollY || document.documentElement.scrollTop
+    
     setIsVisible(true)
-    setTimeout(() => setShowChatPanel(true), 10) // 살짝 지연 후 애니메이션 실행
+    setTimeout(() => {
+      setShowChatPanel(true) // 애니메이션 실행
+      // 사이드탭이 열린 후 즉시 최신 메시지 위치에 표시 (사이드탭 내부만 스크롤)
+      setTimeout(() => {
+        if (sidebarMessagesEndRef.current) {
+          // 사이드탭 내부 컨테이너를 찾아서 스크롤
+          const sidebarContainer = sidebarMessagesEndRef.current.closest('.overflow-y-auto')
+          if (sidebarContainer) {
+            sidebarContainer.scrollTop = sidebarContainer.scrollHeight
+          }
+        }
+        // 사이드탭 열린 후 원래 스크롤 위치로 복원
+        setTimeout(() => {
+          window.scrollTo({ top: currentScrollTop, behavior: "auto" })
+        }, 50)
+      }, 100) // 애니메이션 완료 후 스크롤
+    }, 10)
   }
 }
 
@@ -197,7 +241,8 @@ useEffect(() => {
     sendMessage,
     loadSession,
     clearError,
-    clearMessages
+    clearMessages,
+    resetSession
   } = useChatSession();
 
 // 실제 사용자 ID 가져오기
@@ -210,7 +255,7 @@ const getPersonaName = (personaType: number | null): string => {
   const nameMap: { [key: number]: string } = {
     1: "추진이",
     2: "내면이",
-    3: "관계이",
+    3: "햇살이",
     4: "쾌락이",
     5: "안정이",
   }
@@ -221,7 +266,7 @@ const getCharacterAvatar = (personaId: number | null): string => {
   const nameMap: { [key: number]: string } = {
     1: "추진이",
     2: "내면이",
-    3: "관계이",
+    3: "햇살이",
     4: "쾌락이",
     5: "안정이",
   }
@@ -258,7 +303,7 @@ const getBackgroundStyle = (personaId: number | null): React.CSSProperties => {
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
       }
-    case 3: // 관계이 - 따뜻한 인테리어 배경 이미지 (채도 낮춤)
+    case 3: // 햇살이 - 따뜻한 인테리어 배경 이미지 (채도 낮춤)
       return {
         backgroundImage: "url(/assets/backgrounds/relationship-background.png)",
         backgroundSize: "cover",
@@ -372,34 +417,70 @@ useEffect(() => {
         const urlParams = new URLSearchParams(location.search)
         const sessionId = urlParams.get("sessionId")
 
-        if (sessionId) {
+        // forceNewSession이 true면 기존 세션 무시하고 새 세션 생성
+        if (sessionId && !forceNewSession) {
           // 기존 세션 로드
           console.log('ChatPage - 기존 세션 로드:', sessionId);
           await loadSession(sessionId)
-        } else if (selectedCharacter && currentUserId !== null) {
-          // 새 세션 생성 (URL에 sessionId가 없을 때만)
-          // 사용자 인증 상태 재확인
-          if (!authService.isAuthenticated() && !localStorage.getItem("access_token")) {
-            console.error("사용자가 로그인되어 있지 않습니다.")
-            alert("로그인이 필요합니다. 다시 로그인해주세요.")
-            navigate("/")
-            return
-          }
-
-          if (actualPersonaId !== null) {
-            console.log('ChatPage - 새 세션 생성:', actualPersonaId);
-            await createSession({
-              user_id: currentUserId,
-              persona_id: actualPersonaId,
-              session_name: `${currentPersonaName}와의 대화`,
-            })
-          }
         } else {
-          console.log('ChatPage - 세션 초기화 조건 미충족:', {
-            selectedCharacter: !!selectedCharacter,
-            currentUserId,
-            actualPersonaId
-          });
+          if (forceNewSession) {
+            console.log('ChatPage - 새 세션 강제 생성 모드');
+            // URL에서 sessionId 파라미터 제거
+            const newUrl = new URL(window.location.href);
+            newUrl.searchParams.delete('sessionId');
+            window.history.replaceState(null, '', newUrl.toString());
+          }
+          // 새 세션 생성 로직 (selectedCharacter가 있으면 새 세션 우선)
+          if (selectedCharacter && currentUserId !== null) {
+            // 사용자 인증 상태 재확인
+            if (!authService.isAuthenticated() && !localStorage.getItem("access_token")) {
+              console.error("사용자가 로그인되어 있지 않습니다.")
+              alert("로그인이 필요합니다. 다시 로그인해주세요.")
+              navigate("/")
+              return
+            }
+
+            if (actualPersonaId !== null) {
+              console.log('ChatPage - 새 세션 생성:', actualPersonaId);
+              await createSession({
+                user_id: currentUserId,
+                persona_id: actualPersonaId,
+                session_name: `${currentPersonaName}와의 대화`,
+              })
+            }
+          } else {
+            // selectedCharacter가 없을 때만 localStorage에서 마지막 세션 확인
+            const lastSessionData = localStorage.getItem('lastChatSession')
+            if (lastSessionData) {
+              try {
+                const { sessionId: lastSessionId, personaId: lastPersonaId, timestamp } = JSON.parse(lastSessionData)
+                const now = Date.now()
+                
+                // 24시간 이내의 세션만 복원
+                if (now - timestamp < 24 * 60 * 60 * 1000) {
+                  console.log('ChatPage - selectedCharacter 없음, localStorage에서 마지막 세션 복원:', lastSessionId);
+                  // URL에 sessionId 추가하고 세션 로드
+                  const newUrl = new URL(window.location.href)
+                  newUrl.searchParams.set('sessionId', lastSessionId)
+                  window.history.replaceState(null, '', newUrl.toString())
+                  await loadSession(lastSessionId)
+                  return
+                } else {
+                  // 24시간이 지난 세션 데이터는 삭제
+                  localStorage.removeItem('lastChatSession')
+                }
+              } catch (e) {
+                console.error('localStorage 세션 데이터 파싱 오류:', e)
+                localStorage.removeItem('lastChatSession')
+              }
+            }
+            
+            console.log('ChatPage - 세션 초기화 조건 미충족:', {
+              selectedCharacter: !!selectedCharacter,
+              currentUserId,
+              actualPersonaId
+            });
+          }
         }
       } catch (error) {
         console.error("세션 초기화 실패:", error)
@@ -424,7 +505,7 @@ useEffect(() => {
   location.search,
 ])
 
-// 세션이 생성되면 URL에 세션 ID 추가 (새로고침 시 세션 유지를 위해)
+// 세션이 생성되면 URL에 세션 ID 추가 및 localStorage에 저장 (새로고침 시 세션 유지를 위해)
 useEffect(() => {
   if (session?.chat_sessions_id) {
     const urlParams = new URLSearchParams(location.search)
@@ -436,8 +517,17 @@ useEffect(() => {
       currentUrl.searchParams.set("sessionId", session.chat_sessions_id)
       window.history.replaceState({}, "", currentUrl.toString())
     }
+    
+    // localStorage에 현재 세션 정보 저장
+    const sessionData = {
+      sessionId: session.chat_sessions_id,
+      personaId: session.persona_id,
+      timestamp: Date.now()
+    }
+    localStorage.setItem('lastChatSession', JSON.stringify(sessionData))
+    console.log('ChatPage - 세션 정보 localStorage에 저장:', sessionData)
   }
-}, [session?.chat_sessions_id, location.search])
+}, [session?.chat_sessions_id, session?.persona_id, location.search])
 
 // 레거시 초기화 함수 호출 (기존 코드와의 호환성 유지)
 useEffect(() => {
@@ -627,29 +717,51 @@ return (
       <Navigation onNavigate={onNavigate} />
     </div>
 
-    <style>{`
-      @keyframes natural-movement {
-        0% {
-          transform: translateX(0px) translateY(0px);
+         <style>{`
+       @keyframes natural-movement {
+         0% {
+           transform: translateX(0px) translateY(0px);
+         }
+         25% {
+           transform: translateX(-8px) translateY(-12px);
+         }
+         50% {
+           transform: translateX(5px) translateY(-8px);
+         }
+         75% {
+           transform: translateX(-3px) translateY(-15px);
+         }
+         100% {
+           transform: translateX(0px) translateY(0px);
+         }
+       }
+       
+       .natural-movement {
+         animation: natural-movement 3s ease-in-out infinite;
+       }
+
+               @keyframes floating-bubble {
+          0% {
+            transform: translateY(0px) rotate(0deg);
+          }
+          25% {
+            transform: translateY(-3px) rotate(1deg);
+          }
+          50% {
+            transform: translateY(-1px) rotate(-0.5deg);
+          }
+          75% {
+            transform: translateY(-4px) rotate(0.5deg);
+          }
+          100% {
+            transform: translateY(0px) rotate(0deg);
+          }
         }
-        25% {
-          transform: translateX(-8px) translateY(-12px);
+        
+        .floating-bubble {
+          animation: floating-bubble 5s ease-in-out infinite;
         }
-        50% {
-          transform: translateX(5px) translateY(-8px);
-        }
-        75% {
-          transform: translateX(-3px) translateY(-15px);
-        }
-        100% {
-          transform: translateX(0px) translateY(0px);
-        }
-      }
-      
-      .natural-movement {
-        animation: natural-movement 3s ease-in-out infinite;
-      }
-    `}</style>
+     `}</style>
 
     {/* 페르소나별 배경 오버레이 효과 */}
     <div className="absolute inset-0">
@@ -662,7 +774,7 @@ return (
         <div className="absolute inset-0 bg-black/35" style={{ filter: "saturate(0.5)" }}></div>
       )}
       {actualPersonaId === 3 && (
-        // 관계이용 채도 낮춤 오버레이 (따뜻한 느낌 유지하면서 채도 감소)
+        // 햇살이용 채도 낮춤 오버레이 (따뜻한 느낌 유지하면서 채도 감소)
         <div className="absolute inset-0 bg-black/15" style={{ filter: "saturate(0.6)" }}></div>
       )}
       {actualPersonaId === 4 && (
@@ -694,21 +806,25 @@ return (
     </div>
 
     {/* Bookmark-shaped chat toggle button */}
-    <button
-      onClick={toggleChatPanel}
-      className={`absolute top-1/2 transform -translate-y-1/2 z-20 transition-all duration-300 ${
-        showChatPanel ? "right-96" : "right-0"
-      }`}
-    >
-      <div className="relative">
-        {/* Bookmark shape with rounded corners and custom gradient */}
-        <div className="w-16 h-20 bg-gradient-to-br from-[#FF6948]/50 to-[#FF0051]/50 hover:from-[#FF6948]/60 hover:to-[#FF0051]/60 transition-colors shadow-lg relative rounded-l-2xl backdrop-blur-sm border border-white/10"></div>
-        {/* Arrow icon */}
-        <div className="absolute inset-0 flex items-center justify-center text-white">
-          {showChatPanel ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
-        </div>
+    <div className={`absolute top-1/2 transform -translate-y-1/2 z-20 transition-all duration-300 ${
+      showChatPanel ? "right-96" : "right-0"
+    }`}>
+      {/* 🗨️ 이모티콘 - 화살표 박스 왼쪽에 배치 */}
+      <div className="absolute -left-16 top-1/4 transform -translate-y-1/2 text-3xl floating-bubble">
+        🗨️
       </div>
-    </button>
+      
+      <button onClick={toggleChatPanel}>
+        <div className="relative">
+          {/* Bookmark shape with rounded corners and custom gradient */}
+          <div className="w-16 h-20 bg-gradient-to-br from-[#FF6948]/50 to-[#FF0051]/50 hover:from-[#FF6948]/60 hover:to-[#FF0051]/60 transition-colors shadow-lg relative rounded-l-2xl backdrop-blur-sm border border-white/10"></div>
+          {/* Arrow icon */}
+          <div className="absolute inset-0 flex items-center justify-center text-white">
+            {showChatPanel ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+          </div>
+        </div>
+      </button>
+    </div>
 
     {/* Main chat interface - Compact layout optimized for viewport */}
     <div
@@ -761,7 +877,7 @@ return (
             return lastBotMessage ? (
               <div className="w-full">
                 <div className="bg-black/35 backdrop-blur-md rounded-3xl px-8 py-6 text-center shadow-2xl relative border border-white/10">
-                  <p className="text-white text-lg leading-relaxed">{lastBotMessage.content}</p>
+                  <p className="text-white text-lg leading-relaxed whitespace-pre-wrap">{lastBotMessage.content}</p>
                   {/* Speech bubble tail */}
                   <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
                     <div className="w-0 h-0 border-l-8 border-r-8 border-t-16 border-transparent border-t-black/35"></div>
@@ -838,43 +954,99 @@ return (
             <h3 className="text-white font-bold text-lg">채팅 기록</h3>
           </div>
 
-                     {/* 채팅 메시지 영역 */}
-           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 flex flex-col-reverse">
-             {chatMessages.length > 0 ? (
-               <div className="space-y-4">
-                 {chatMessages.map((message, index) => (
-                   <div key={index} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
-                     <div className="flex flex-col max-w-[80%]">
-                       <div
-                         className={`px-4 py-3 rounded-2xl ${
-                           message.type === "user"
-                             ? "bg-blue-500/90 text-white rounded-br-md shadow-lg"
-                             : "bg-white/90 text-gray-800 rounded-bl-md shadow-lg"
-                         }`}
-                       >
-                         {message.content}
-                       </div>
-                       <div
-                         className={`text-xs text-white/70 mt-1 ${message.type === "user" ? "text-right" : "text-left"}`}
-                       >
-                         {message.timestamp}
-                       </div>
-                     </div>
-                   </div>
-                 ))}
-               </div>
-             ) : (
-               <div className="text-center text-white/70 py-8">
-                 <div className="text-white/50 text-6xl mb-4">💬</div>
-                 <p className="text-lg font-medium">대화를 시작해보세요</p>
-                 <p className="text-sm mt-2">첫 메시지를 보내보세요!</p>
-               </div>
-             )}
-             <div ref={sidebarMessagesEndRef} />
-           </div>
-
+          {/* 채팅 메시지 영역 */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {chatMessages.length > 0 ? (
+              <div className="space-y-4">
+                {chatMessages.map((message, index) => (
+                  <div key={index} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
+                    <div className="flex flex-col max-w-[80%]">
+                      <div
+                        className={`px-4 py-3 rounded-2xl whitespace-pre-wrap ${
+                          message.type === "user"
+                            ? "bg-blue-500/90 text-white rounded-br-md shadow-lg"
+                            : "bg-white/90 text-gray-800 rounded-bl-md shadow-lg"
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                      <div
+                        className={`text-xs text-white/70 mt-1 ${message.type === "user" ? "text-right" : "text-left"}`}
+                      >
+                        {message.timestamp}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-white/70 py-8">
+                <div className="text-white/50 text-6xl mb-4">💬</div>
+                <p className="text-lg font-medium">대화를 시작해보세요</p>
+                <p className="text-sm mt-2">첫 메시지를 보내보세요!</p>
+              </div>
+            )}
+            <div ref={sidebarMessagesEndRef} />
+          </div>
           {/* 하단 버튼 */}
           <div className="px-4 py-8 border-t border-white/30 flex-shrink-0 space-y-2 mt-6">
+            <Button
+              onClick={async () => {
+                console.log('새로운 채팅 세션 버튼 클릭:', { 
+                  currentUserId, 
+                  actualPersonaId, 
+                  currentPersonaName,
+                  currentSession: session?.chat_sessions_id
+                })
+                
+                if (currentUserId !== null && actualPersonaId !== null) {
+                  try {
+                    console.log('기존 세션 리셋 시작')
+                    
+                    // 1. 기존 세션 상태 완전히 리셋
+                    resetSession()
+                    
+                    // 2. localStorage 및 URL 정리
+                    localStorage.removeItem('lastChatSession')
+                    const currentUrl = new URL(window.location.href)
+                    currentUrl.searchParams.delete('sessionId')
+                    window.history.replaceState({}, '', currentUrl.toString())
+                    
+                    console.log('세션 리셋 완료, 새로운 세션 생성 시작')
+                    
+                    // 3. 새로운 세션 생성 (개인화된 인사 포함)
+                    const newSession = await createSession({
+                      user_id: currentUserId,
+                      persona_id: actualPersonaId,
+                      session_name: `${currentPersonaName}와의 대화`
+                    })
+
+                    if (newSession) {
+                      console.log('새로운 세션 생성 성공:', newSession.chat_sessions_id)
+                      
+                      // 4. URL에 새 세션 ID 반영 (리다이렉트 없음)
+                      const newUrl = new URL(window.location.href)
+                      newUrl.searchParams.set('sessionId', newSession.chat_sessions_id)
+                      window.history.replaceState(null, '', newUrl.toString())
+                      
+                      console.log('새로운 채팅 세션 준비 완료')
+                    } else {
+                      console.error('새로운 세션 생성 실패')
+                      alert('새로운 세션 생성에 실패했습니다. 다시 시도해주세요.')
+                    }
+                  } catch (error) {
+                    console.error('새로운 세션 생성 중 오류:', error)
+                    alert('오류가 발생했습니다: ' + (error instanceof Error ? error.message : String(error)))
+                  }
+                } else {
+                  console.error('사용자 ID 또는 페르소나 ID가 없습니다:', { currentUserId, actualPersonaId })
+                  alert('새로운 세션을 시작할 수 없습니다. 페이지를 새로고침해주세요.')
+                }
+              }}
+              className="w-full bg-gradient-to-r from-green-500/80 to-teal-600/80 hover:from-green-600/90 hover:to-teal-700/90 text-white py-3 rounded-full font-medium transition-all duration-200 backdrop-blur-sm shadow-lg"
+            >
+              {currentPersonaName}와 새로운 채팅 세션 시작하기
+            </Button>
             <Button
               onClick={() => {
                 // 만족도 조사 모달 표시

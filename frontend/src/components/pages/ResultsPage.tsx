@@ -128,7 +128,7 @@ const ResultsPage: React.FC<ResultsPageProps> = ({
     const typeToCharacter: { [key: string]: string } = {
       '추진형': '추진이',
       '내면형': '내면이', 
-      '관계형': '관계이',
+      '관계형': '햇살이',
       '쾌락형': '쾌락이',
       '안정형': '안정이'
     };
@@ -152,7 +152,7 @@ const getColorForType = (type: string) => {
     const imageMap: { [key: string]: string } = {
       '추진형': '../../assets/persona/추진이.png',
       '내면형': '../../assets/persona/내면이.png',
-      '관계형': '../../assets/persona/관계이.png',
+      '관계형': '../../assets/persona/햇살이.png',
       '쾌락형': '../../assets/persona/쾌락이.png',
       '안정형': '../../assets/persona/안정이.png'
     };
@@ -362,6 +362,8 @@ const getColorForType = (type: string) => {
     };
     
     onCharacterSelect(character);
+    // 새로운 캐릭터와의 대화 시작이므로 기존 세션 정보 삭제
+    localStorage.removeItem('lastChatSession');
     onStartChat();
     navigate('/chat');
   };
@@ -408,7 +410,7 @@ const getColorForType = (type: string) => {
         {/* Main result card */}
         <div className="max-w-4xl mx-auto mb-8">
           <div className="bg-slate-700/50 backdrop-blur-sm rounded-3xl p-8 border border-white/20">
-            <h1 className="text-white text-xl font-bold text-left mb-8">그림 심리 분석 결과</h1>
+            <h1 className="text-white text-xl font-bold text-left mb-8 exclude-from-image">그림 심리 분석 결과</h1>
 
             <div ref={resultCardRef} className="bg-slate-600/50 rounded-2xl p-8">
               <div className="flex items-center justify-center space-x-8 mb-6">
@@ -456,7 +458,9 @@ const getColorForType = (type: string) => {
                       <img 
                         src={testService.getImageUrl(testData.imageUrl)} 
                         alt="분석된 그림" 
-                        className="w-32 h-32 object-cover rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200"
+                        className="w-32 h-32 object-contain rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200"
+                        onLoad={() => console.log('✅ 이미지 로드 성공:', testService.getImageUrl(testData.imageUrl))}
+                        onError={() => console.error('❌ 이미지 로드 실패:', testService.getImageUrl(testData.imageUrl))}
                       />
                       <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 rounded-lg transition-opacity duration-200 flex items-center justify-center">
                         <span className="text-white opacity-0 group-hover:opacity-100 text-xs font-medium transition-opacity duration-200">
@@ -474,7 +478,7 @@ const getColorForType = (type: string) => {
                             <img 
                               src={fullImageUrl}
                               alt="분석한 그림"
-                              className="w-32 h-32 object-cover rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200"
+                              className="w-32 h-32 object-contain rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200"
                               onError={(e) => {
                                 console.error('❌ 오른쪽 이미지 로드 실패:', fullImageUrl);
                                 e.currentTarget.style.display = 'none';
@@ -530,7 +534,7 @@ const getColorForType = (type: string) => {
             </div>
 
             {/* 수정(따봉/붐따) 및 저장 버튼 */}
-            <div className="max-w-4xl mx-auto mb-8">
+            <div className="max-w-4xl mx-auto mb-8 exclude-from-image">
               <div className="flex">
                 {/* 수정(따봉/붐따) 박스 */}
                 <div className="flex-[2] bg-slate-700/60 backdrop-blur-lg rounded-l-2xl p-4 border border-white/20 shadow-2xl border-r-0">
