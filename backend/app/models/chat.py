@@ -4,6 +4,8 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .user import Base
 import uuid
+from datetime import datetime
+import pytz
 
 class ChatSession(Base):
     """채팅 세션 모델"""
@@ -15,8 +17,8 @@ class ChatSession(Base):
     session_name = Column(String(255))
     conversation_summary = Column(Text)  # 대화 요약 저장용
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now())
+    created_at = Column(DateTime, default=lambda: datetime.now(pytz.timezone('Asia/Seoul')))
+    updated_at = Column(DateTime, default=lambda: datetime.now(pytz.timezone('Asia/Seoul')))
     
     # 관계 정의
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
@@ -32,7 +34,7 @@ class ChatMessage(Base):
     session_id = Column(UUID(as_uuid=True), ForeignKey('chat_sessions.chat_sessions_id', ondelete='CASCADE'))
     sender_type = Column(String(20), nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=func.now())
+    created_at = Column(DateTime, default=lambda: datetime.now(pytz.timezone('Asia/Seoul')))
     
     # 관계 정의
     session = relationship("ChatSession", back_populates="messages")

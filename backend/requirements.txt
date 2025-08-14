@@ -55,3 +55,4 @@ transformers
 datasets
 evaluate
 tokenizers
+pytz==2023.3
