@@ -590,7 +590,7 @@ async def get_analysis_status(
                 match = re.search(r'result/images/original/(.+?)\.jpg', image_url)
                 if match:
                     unique_id = match.group(1)
-                    status_info = pipeline.get_analysis_status(unique_id)
+                    status_info = pipeline_manager.get_pipeline().get_analysis_status(unique_id)
                     
                     # 단계별 진행상황 구성
                     detection_completed = status_info.get("detection_completed", False)
@@ -649,11 +649,32 @@ async def get_analysis_status(
                     })
             
             # 기본 응답 (파일명 추출 실패 시)
+            default_steps = [
+                {
+                    "name": "객체 탐지",
+                    "description": "YOLO를 사용한 그림 요소 검출",
+                    "completed": progress.detection_completed,
+                    "current": not progress.detection_completed
+                },
+                {
+                    "name": "심리 분석", 
+                    "description": "GPT-4를 사용한 심리상태 분석",
+                    "completed": progress.analysis_completed,
+                    "current": progress.detection_completed and not progress.analysis_completed
+                },
+                {
+                    "name": "성격 분류",
+                    "description": "키워드 분류기를 사용한 성격유형 분류", 
+                    "completed": progress.classification_completed,
+                    "current": progress.analysis_completed and not progress.classification_completed
+                }
+            ]
+            
             return JSONResponse(content={
                 "test_id": test_id,
                 "status": "processing",
                 "message": f"단계 {progress.current_step}/3 진행 중...",
-                "steps": steps,
+                "steps": default_steps,
                 "current_step": progress.current_step,
                 "completed_steps": progress.completed_steps,
                 "total_steps": 3,
