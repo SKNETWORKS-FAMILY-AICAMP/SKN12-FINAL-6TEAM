@@ -63,7 +63,7 @@ const AppContent: React.FC = () => {
 
   // 로그인 상태 확인 및 리다이렉션
   useEffect(() => {
-    const checkAuthAndRedirect = () => {
+    const checkAuthAndRedirect = async () => {
       const isAuthenticated = authService.isAuthenticated();
       const protectedRoutes = [
         '/main',
@@ -74,7 +74,6 @@ const AppContent: React.FC = () => {
         '/mypage',
         '/result-detail',
         '/characters',
-        '/nickname',
       ];
 
       // Check if the current path starts with any of the protected routes
@@ -82,6 +81,21 @@ const AppContent: React.FC = () => {
 
       if (isProtectedRoute && !isAuthenticated) {
         navigate('/');
+        return;
+      }
+
+      // 인증된 사용자에 대해 temp_user 체크
+      if (isAuthenticated && !location.pathname.startsWith('/nickname')) {
+        try {
+          const user = await authService.getCurrentUser();
+          if (user && user.is_first_login) {
+            console.log('🔄 temp_user detected, redirecting to nickname page');
+            navigate('/nickname');
+            return;
+          }
+        } catch (error) {
+          console.error('❌ Failed to check user status:', error);
+        }
       }
     };
 

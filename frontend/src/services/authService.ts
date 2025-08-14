@@ -88,8 +88,9 @@ class AuthService {
           console.log('🆕 First time user, redirecting to nickname page');
           window.location.href = '/nickname';
         } else {
-          console.log('👤 Existing user, redirecting to main page');
-          window.location.href = '/main';
+          console.log('👤 Existing user, checking for temp_user status');
+          // 기존 사용자도 temp_user일 수 있으므로 추가 확인
+          await this.checkAndRedirectTempUser();
         }
       } else {
         console.error('❌ Backend authentication failed');
@@ -358,6 +359,23 @@ class AuthService {
   getCurrentUserId(): number | null {
     const user = this.getUserInfo();
     return user ? user.id : null;
+  }
+
+  private async checkAndRedirectTempUser(): Promise<void> {
+    try {
+      const user = await this.getCurrentUser();
+      if (user && user.is_first_login) {
+        console.log('🔄 temp_user detected, redirecting to nickname page');
+        window.location.href = '/nickname';
+      } else {
+        console.log('✅ User has valid nickname, redirecting to main page');
+        window.location.href = '/main';
+      }
+    } catch (error) {
+      console.error('❌ Failed to check temp_user status:', error);
+      // 오류 발생 시 기본적으로 main으로 리디렉션
+      window.location.href = '/main';
+    }
   }
 }
 

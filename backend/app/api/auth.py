@@ -332,3 +332,57 @@ async def complete_signup(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Signup completion failed: {str(e)}"
         )
+
+@router.post("/cleanup-duplicate-users")
+async def cleanup_duplicate_users(
+    db: Session = Depends(get_db)
+):
+    """기존 중복 temp_user 계정들을 정리합니다 (관리자용)"""
+    try:
+        from sqlalchemy import func
+        from ..models.user import SocialUser, UserInformation
+        
+        # 동일한 social_id를 가진 중복 social_users 찾기
+        duplicate_social_ids = db.query(SocialUser.social_id).group_by(
+            SocialUser.social_id
+        ).having(func.count(SocialUser.social_id) > 1).all()
+        
+        cleanup_results = []
+        
+        for (social_id,) in duplicate_social_ids:
+            all_social_users = db.query(SocialUser).filter(
+                SocialUser.social_id == social_id
+            ).all()
+            
+            if len(all_social_users) > 1:
+                print(f"🔍 Found {len(all_social_users)} duplicates for social_id: {social_id}")
+                
+                # 중복 정리 실행
+                remaining_user = auth_service._cleanup_duplicate_users(db, all_social_users, social_id)
+                
+                cleanup_results.append({
+                    "social_id": social_id,
+                    "total_duplicates": len(all_social_users),
+                    "remaining_social_user_id": remaining_user.social_user_id
+                })
+        
+        if cleanup_results:
+            db.commit()
+            return {
+                "message": f"{len(cleanup_results)}개의 중복 계정 그룹이 정리되었습니다.",
+                "cleaned_groups": len(cleanup_results),
+                "details": cleanup_results
+            }
+        else:
+            return {
+                "message": "정리할 중복 계정이 없습니다.",
+                "cleaned_groups": 0,
+                "details": []
+            }
+            
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Duplicate cleanup failed: {str(e)}"
+        )
