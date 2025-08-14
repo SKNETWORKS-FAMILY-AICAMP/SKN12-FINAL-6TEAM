@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, field_serializer
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import pytz
 from uuid import UUID
 
 # 채팅 세션 스키마
@@ -22,6 +23,21 @@ class ChatSessionResponse(ChatSessionBase):
     created_at: datetime = Field(..., description="생성 시간")
     updated_at: datetime = Field(..., description="수정 시간")
     
+    @field_serializer('created_at', 'updated_at')
+    def serialize_datetime(self, value: datetime) -> str:
+        """시간을 서울 시간대로 변환하여 직렬화"""
+        if value is None:
+            return None
+        
+        # timezone 정보가 없으면 UTC로 가정하고 서울시간으로 변환
+        if value.tzinfo is None:
+            utc_time = pytz.utc.localize(value)
+        else:
+            utc_time = value.astimezone(pytz.utc)
+        
+        seoul_time = utc_time.astimezone(pytz.timezone('Asia/Seoul'))
+        return seoul_time.isoformat()
+    
     model_config = {"from_attributes": True}
 
 # 채팅 메시지 스키마
@@ -36,6 +52,21 @@ class ChatMessageResponse(ChatMessageBase):
     session_id: UUID = Field(..., description="세션 ID")
     sender_type: str = Field(..., description="발신자 타입")
     created_at: datetime = Field(..., description="생성 시간")
+    
+    @field_serializer('created_at')
+    def serialize_datetime(self, value: datetime) -> str:
+        """시간을 서울 시간대로 변환하여 직렬화"""
+        if value is None:
+            return None
+        
+        # timezone 정보가 없으면 UTC로 가정하고 서울시간으로 변환
+        if value.tzinfo is None:
+            utc_time = pytz.utc.localize(value)
+        else:
+            utc_time = value.astimezone(pytz.utc)
+        
+        seoul_time = utc_time.astimezone(pytz.timezone('Asia/Seoul'))
+        return seoul_time.isoformat()
     
     model_config = {"from_attributes": True}
 
