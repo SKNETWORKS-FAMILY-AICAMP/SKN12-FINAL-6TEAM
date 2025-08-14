@@ -224,10 +224,15 @@ async def get_my_test_results(
     
     response_data = []
     for test in results:
+        # 이미지 URL 경로 변환 (result/images/ -> /images/)
+        image_url = test.image_url
+        if image_url and image_url.startswith("result/"):
+            image_url = "/" + image_url[7:]  # "result/" 제거하고 "/" 추가
+        
         test_data = {
             "test_id": test.test_id,
             "user_id": test.user_id,
-            "image_url": test.image_url,
+            "image_url": image_url,
             "submitted_at": test.submitted_at,
             "result": None
         }
