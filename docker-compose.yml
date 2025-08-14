@@ -5,6 +5,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - TZ=Asia/Seoul
       - FRONTEND_URL=http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com
       - GOOGLE_REDIRECT_URI=http://ec2-3-34-245-132.ap-northeast-2.compute.amazonaws.com/auth/google/callback
     env_file:
