@@ -4,6 +4,7 @@ import json
 import logging
 import traceback
 from datetime import datetime
+import pytz
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Any
 from dataclasses import dataclass
@@ -120,7 +121,7 @@ class HTPAnalysisPipeline:
             logger.handlers.clear()
         
         # 파일 핸들러
-        log_file = self.config.log_dir / f"pipeline_{datetime.now().strftime('%Y%m%d')}.log"
+        log_file = self.config.log_dir / f"pipeline_{datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y%m%d')}.log"
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setLevel(logging.INFO)
         
@@ -414,10 +415,10 @@ class HTPAnalysisPipeline:
         result = PipelineResult(
             status=PipelineStatus.RUNNING,
             image_base=image_base,
-            timestamp=datetime.now()
+            timestamp=datetime.now(pytz.timezone('Asia/Seoul'))
         )
         
-        self.logger.info(f"🚀 [TIMING] 이미지 분석 시작: {image_base} - 시작시간: {datetime.now().strftime('%H:%M:%S')} ({start_time:.3f}초)")
+        self.logger.info(f"🚀 [TIMING] 이미지 분석 시작: {image_base} - 시작시간: {datetime.now(pytz.timezone('Asia/Seoul')).strftime('%H:%M:%S')} ({start_time:.3f}초)")
         
         try:
             # 이미지 파일 경로 구성

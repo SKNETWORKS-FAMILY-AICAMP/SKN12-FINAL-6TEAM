@@ -14,6 +14,7 @@ import uuid
 import time
 import logging
 from datetime import datetime
+import pytz
 from pathlib import Path
 
 # PIL imports
@@ -392,7 +393,7 @@ async def analyze_drawing_image(
         drawing_test = DrawingTest(
             user_id=current_user["user_id"],
             image_url=f"result/images/original/{unique_id}.jpg",  # 원본 이미지 경로
-            submitted_at=datetime.now()
+            submitted_at=datetime.now(pytz.timezone('Asia/Seoul'))
         )
         
         db.add(drawing_test)
@@ -465,7 +466,7 @@ def run_analysis_pipeline(
                 test_id=test_id,
                 persona_type=None,
                 summary_text=f"분석 중 오류가 발생했습니다: {str(e)}",
-                created_at=datetime.now()
+                created_at=datetime.now(pytz.timezone('Asia/Seoul'))
             )
             db.add(error_result)
             db.commit()
@@ -492,7 +493,7 @@ def save_analysis_result(
                 test_id=test_id,
                 persona_type=None,  # NULL로 저장
                 summary_text=analysis_data['error_message'],
-                created_at=datetime.now(),
+                created_at=datetime.now(pytz.timezone('Asia/Seoul')),
                 # 모든 점수를 NULL로
                 dog_scores=None,
                 cat_scores=None,
@@ -514,7 +515,7 @@ def save_analysis_result(
             # 업데이트
             existing.persona_type = analysis_data['persona_type_id']
             existing.summary_text = analysis_data['summary_text']
-            existing.created_at = datetime.now()
+            existing.created_at = datetime.now(pytz.timezone('Asia/Seoul'))
             
             # 점수 업데이트
             for field, value in analysis_data['persona_scores'].items():
@@ -527,7 +528,7 @@ def save_analysis_result(
                 test_id=test_id,
                 persona_type=analysis_data['persona_type_id'],
                 summary_text=analysis_data['summary_text'],
-                created_at=datetime.now(),
+                created_at=datetime.now(pytz.timezone('Asia/Seoul')),
                 **analysis_data['persona_scores']
             )
             db.add(new_result)
@@ -546,7 +547,7 @@ def save_analysis_result(
                 test_id=test_id,
                 persona_type=None,
                 summary_text=f"결과 저장 중 오류 발생: {str(e)}",
-                created_at=datetime.now()
+                created_at=datetime.now(pytz.timezone('Asia/Seoul'))
             )
             db.add(error_result)
             db.commit()
@@ -756,7 +757,7 @@ async def check_pipeline_health():
     
     status = {
         "pipeline_status": "unknown",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),
         "components": {
             "pipeline_import": PIPELINE_AVAILABLE,
             "yolo_model": False,

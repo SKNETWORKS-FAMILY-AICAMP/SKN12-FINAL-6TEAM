@@ -13,6 +13,7 @@ import re
 import json
 from typing import List, Dict, Any
 from datetime import datetime
+import pytz
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -28,7 +29,7 @@ class ConversationMemory:
         self.max_messages = max_messages
         self.messages: List[Dict[str, Any]] = []
         self.session_info = {
-            "started_at": datetime.now().isoformat(),
+            "started_at": datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),
             "user_traits": [],
             "key_topics": [],
             "emotional_state": "neutral",
@@ -40,7 +41,7 @@ class ConversationMemory:
         message = {
             "role": role,
             "content": content,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),
             "metadata": metadata or {}
         }
         
@@ -410,7 +411,7 @@ class PromptCounselor:
             # 사용자 메시지를 메모리에 추가
             self.memory.add_message("user", user_message, {
                 "stage": self.conversation_stage,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(pytz.timezone('Asia/Seoul')).isoformat()
             })
             
             # 감정 상태 및 주요 주제 업데이트

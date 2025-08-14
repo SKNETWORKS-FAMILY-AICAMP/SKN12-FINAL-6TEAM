@@ -3,6 +3,7 @@ import re
 import json
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+import pytz
 from uuid import UUID
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -27,7 +28,7 @@ class ConversationMemory:
         self.db = db
         self.max_messages = max_messages
         self.session_info = {
-            "started_at": datetime.now().isoformat(),
+            "started_at": datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),
             "user_traits": [],
             "key_topics": [],
             "emotional_state": "neutral",
@@ -224,7 +225,7 @@ class ChatService:
         # 세션 업데이트 시간 갱신
         session = self.get_session(session_id)
         if session:
-            session.updated_at = datetime.now()
+            session.updated_at = datetime.now(pytz.timezone('Asia/Seoul'))
             self.db.commit()
         
         return message
@@ -234,7 +235,7 @@ class ChatService:
         session = self.get_session(session_id)
         if session:
             session.conversation_stage = stage
-            session.updated_at = datetime.now()
+            session.updated_at = datetime.now(pytz.timezone('Asia/Seoul'))
             self.db.commit()
             return True
         return False
@@ -254,7 +255,7 @@ class ChatService:
         session = self.get_session(session_id)
         if session:
             session.is_active = False
-            session.updated_at = datetime.now()
+            session.updated_at = datetime.now(pytz.timezone('Asia/Seoul'))
             self.db.commit()
             return True
         return False

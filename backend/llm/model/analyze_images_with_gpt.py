@@ -10,6 +10,7 @@ import re
 from PIL import Image, ImageOps
 import io
 from datetime import datetime
+import pytz
 
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), '../opensearch_modules'))
@@ -321,7 +322,7 @@ def analyze_image_with_gpt(image_path, prompt, rag_context=None, max_retries=5):
 
             import time
             gpt_start_time = time.time()
-            gpt_start_datetime = datetime.now()
+            gpt_start_datetime = datetime.now(pytz.timezone('Asia/Seoul'))
             print(f"🤖 [TIMING] GPT API 호출 시작: {gpt_start_datetime.strftime('%H:%M:%S.%f')[:-3]} (시도 {attempt + 1}/{max_retries})")
             
             response = openai.chat.completions.create(
@@ -338,7 +339,7 @@ def analyze_image_with_gpt(image_path, prompt, rag_context=None, max_retries=5):
             
             gpt_end_time = time.time()
             gpt_duration = gpt_end_time - gpt_start_time
-            gpt_end_datetime = datetime.now()
+            gpt_end_datetime = datetime.now(pytz.timezone('Asia/Seoul'))
             print(f"✅ [TIMING] GPT API 호출 완료: {gpt_end_datetime.strftime('%H:%M:%S.%f')[:-3]}")
             print(f"⏱️  [TIMING] GPT API 소요시간: {gpt_duration:.2f}초")
             
@@ -411,7 +412,7 @@ def analyze_image_gpt(image_base):
     # 분석 시작 시간 기록
     import time
     analysis_start_time = time.time()
-    analysis_start_datetime = datetime.now()
+    analysis_start_datetime = datetime.now(pytz.timezone('Asia/Seoul'))
     print(f"🚀 [TIMING] 심리 분석 전체 시작: {analysis_start_datetime.strftime('%H:%M:%S.%f')[:-3]}")
     
     try:
@@ -457,7 +458,7 @@ def analyze_image_gpt(image_base):
         # 오류 시간 기록
         error_time = time.time()
         error_duration = error_time - analysis_start_time if 'analysis_start_time' in locals() else 0
-        error_datetime = datetime.now()
+        error_datetime = datetime.now(pytz.timezone('Asia/Seoul'))
         print(f"❌ [TIMING] 심리 분석 오류 발생: {error_datetime.strftime('%H:%M:%S.%f')[:-3]}")
         if error_duration > 0:
             print(f"⏱️  [TIMING] 오류까지 소요시간: {error_duration:.2f}초 ({error_duration/60:.1f}분)")
@@ -505,7 +506,7 @@ def analyze_image_gpt(image_base):
     # 분석 완료 시간 기록
     analysis_end_time = time.time()
     analysis_duration = analysis_end_time - analysis_start_time
-    analysis_end_datetime = datetime.now()
+    analysis_end_datetime = datetime.now(pytz.timezone('Asia/Seoul'))
     print(f"✅ [TIMING] 심리 분석 전체 완료: {analysis_end_datetime.strftime('%H:%M:%S.%f')[:-3]}")
     print(f"⏱️  [TIMING] 심리 분석 총 소요시간: {analysis_duration:.2f}초 ({analysis_duration/60:.1f}분)")
     
